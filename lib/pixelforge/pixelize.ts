@@ -16,6 +16,9 @@ export interface PixelizeOptions {
   preserveAlpha?: boolean;
   fit?: PixelFit;
   sampling?: PixelSampling;
+  trimTransparent?: boolean;
+  targetOccupancy?: number;
+  hardAlpha?: boolean;
 }
 
 export interface PixelizeResult {
@@ -334,6 +337,65 @@ function validateSourceDimensions(width: number, height: number): void {
   }
 }
 
+type SourceBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function clampUnit(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0.1, Math.min(1, Number(value)));
+}
+
+function detectContentBounds(
+  bitmap: ImageBitmap,
+  alphaThreshold: number,
+): SourceBounds {
+  const longest = Math.max(bitmap.width, bitmap.height);
+  const analysisScale = Math.min(1, 1024 / longest);
+  const width = Math.max(1, Math.round(bitmap.width * analysisScale));
+  const height = Math.max(1, Math.round(bitmap.height * analysisScale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
+  }
+  context.clearRect(0, 0, width, height);
+  context.drawImage(bitmap, 0, 0, width, height);
+  const rgba = context.getImageData(0, 0, width, height).data;
+  let minimumX = width;
+  let minimumY = height;
+  let maximumX = -1;
+  let maximumY = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (rgba[(y * width + x) * 4 + 3] < alphaThreshold) continue;
+      minimumX = Math.min(minimumX, x);
+      minimumY = Math.min(minimumY, y);
+      maximumX = Math.max(maximumX, x);
+      maximumY = Math.max(maximumY, y);
+    }
+  }
+  if (maximumX < minimumX || maximumY < minimumY) {
+    return { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
+  }
+  const inverse = 1 / analysisScale;
+  const x = Math.max(0, Math.floor(minimumX * inverse));
+  const y = Math.max(0, Math.floor(minimumY * inverse));
+  const right = Math.min(bitmap.width, Math.ceil((maximumX + 1) * inverse));
+  const bottom = Math.min(bitmap.height, Math.ceil((maximumY + 1) * inverse));
+  return {
+    x,
+    y,
+    width: Math.max(1, right - x),
+    height: Math.max(1, bottom - y),
+  };
+}
+
 export async function inspectRaster(blob: Blob): Promise<{ width: number; height: number }> {
   const bitmap = await decodeRaster(blob);
   const dimensions = { width: bitmap.width, height: bitmap.height };
@@ -370,23 +432,44 @@ export async function pixelizeRaster(
   context.imageSmoothingEnabled = (options.sampling ?? "smooth") === "smooth";
   if ("imageSmoothingQuality" in context) context.imageSmoothingQuality = "high";
 
+  const requestedThreshold = Number.isFinite(options.alphaThreshold)
+    ? Number(options.alphaThreshold)
+    : 8;
+  const alphaThreshold = Math.max(0, Math.min(255, requestedThreshold));
+  const source = options.trimTransparent
+    ? detectContentBounds(bitmap, Math.max(1, alphaThreshold))
+    : { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
+  const occupancy = clampUnit(options.targetOccupancy, 1);
   let destinationX = 0;
   let destinationY = 0;
-  let destinationWidth = canvas.width;
-  let destinationHeight = canvas.height;
+  let destinationWidth = canvas.width * occupancy;
+  let destinationHeight = canvas.height * occupancy;
   const fit = options.fit ?? "contain";
   if (fit !== "stretch") {
     const scale =
       fit === "cover"
-        ? Math.max(canvas.width / bitmap.width, canvas.height / bitmap.height)
-        : Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
-    destinationWidth = bitmap.width * scale;
-    destinationHeight = bitmap.height * scale;
+        ? Math.max(
+            (canvas.width * occupancy) / source.width,
+            (canvas.height * occupancy) / source.height,
+          )
+        : Math.min(
+            (canvas.width * occupancy) / source.width,
+            (canvas.height * occupancy) / source.height,
+          );
+    destinationWidth = source.width * scale;
+    destinationHeight = source.height * scale;
+    destinationX = (canvas.width - destinationWidth) / 2;
+    destinationY = (canvas.height - destinationHeight) / 2;
+  } else {
     destinationX = (canvas.width - destinationWidth) / 2;
     destinationY = (canvas.height - destinationHeight) / 2;
   }
   context.drawImage(
     bitmap,
+    source.x,
+    source.y,
+    source.width,
+    source.height,
     destinationX,
     destinationY,
     destinationWidth,
@@ -395,7 +478,14 @@ export async function pixelizeRaster(
   bitmap.close();
   assertActive(signal);
 
-  const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  if (options.hardAlpha) {
+    for (let offset = 3; offset < imageData.data.length; offset += 4) {
+      imageData.data[offset] =
+        imageData.data[offset] < alphaThreshold ? 0 : 255;
+    }
+  }
+  const rgba = imageData.data;
   const converted = pixelizeRgba(rgba, canvas.width, canvas.height, options);
   assertActive(signal);
   const project = createProject(canvas.width, canvas.height, name || "Pixelized image");

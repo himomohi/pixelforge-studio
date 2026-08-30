@@ -13,20 +13,45 @@ export type ToolOutput = JsonValue | { [key: string]: JsonValue };
 export interface EditorAutomationApi {
   getProjectState(options?: { includePixels?: boolean }): ToolOutput;
   listProjectPresets(): ToolOutput;
+  listProjects(): ToolOutput | Promise<ToolOutput>;
+  selectProject(projectId: string): ToolOutput | Promise<ToolOutput>;
+  duplicateProject(): ToolOutput;
+  deleteProject(projectId: string): ToolOutput | Promise<ToolOutput>;
   createFromPreset(input: { presetId: string; name?: string }): ToolOutput;
   createProject(input: { width: number; height: number; name?: string }): ToolOutput;
   pixelizeImage(
     input: {
       imageDataUrl: string;
       name?: string;
-      width: number;
-      height: number;
+      width?: number;
+      height?: number;
+      resolutionMode?: "source-exact" | "auto-faithful" | "custom";
       maxColors?: number;
       dither?: "none" | "ordered-4x4" | "floyd-steinberg";
       fit?: "contain" | "cover" | "stretch";
       sampling?: "smooth" | "nearest";
       alphaThreshold?: number;
       preserveAlpha?: boolean;
+      trimTransparent?: boolean;
+      targetOccupancy?: number;
+      hardAlpha?: boolean;
+    },
+    signal?: AbortSignal,
+  ): ToolOutput | Promise<ToolOutput>;
+  createAnimationFromImages(
+    input: {
+      imageDataUrls: string[];
+      sourceNames?: string[];
+      name?: string;
+      width?: number;
+      height?: number;
+      resolutionMode?: "source-exact" | "auto-faithful" | "custom";
+      maxColors?: number;
+      alphaThreshold?: number;
+      targetOccupancy?: number;
+      fps?: number;
+      loopMode?: "loop" | "once" | "ping-pong";
+      separateLayers?: boolean;
     },
     signal?: AbortSignal,
   ): ToolOutput | Promise<ToolOutput>;
@@ -62,6 +87,9 @@ export interface EditorAutomationApi {
       sampling?: "smooth" | "nearest";
       alphaThreshold?: number;
       preserveAlpha?: boolean;
+      trimTransparent?: boolean;
+      targetOccupancy?: number;
+      hardAlpha?: boolean;
     },
     signal?: AbortSignal,
   ): ToolOutput | Promise<ToolOutput>;
@@ -115,7 +143,7 @@ export interface EditorAutomationApi {
   toggleSymmetry(enabled?: boolean): ToolOutput;
   playback(action: "play" | "pause" | "stop"): ToolOutput;
   exportAsset(
-    format: "png" | "gif" | "spritesheet" | "project",
+    format: "png" | "gif" | "spritesheet" | "project" | "game-bundle",
     options?: ToolInput,
     signal?: AbortSignal,
   ): ToolOutput | Promise<ToolOutput>;
@@ -181,8 +209,8 @@ const point = {
   additionalProperties: false,
   required: ["x", "y"],
   properties: {
-    x: integer(0, 1023, "Zero-based pixel x coordinate."),
-    y: integer(0, 1023, "Zero-based pixel y coordinate."),
+    x: integer(0, 4095, "Zero-based pixel x coordinate."),
+    y: integer(0, 4095, "Zero-based pixel y coordinate."),
   },
 };
 
@@ -253,6 +281,59 @@ export async function registerPixelForgeTools(
       { readOnlyHint: true, idempotentHint: true },
     ),
     definition(
+      "list_projects",
+      "List local projects",
+      "List every browser-local PixelForge project with its stable id, name, dimensions, frame count, layer count, and last update time.",
+      noArgs,
+      async (_input, context) => {
+        assertActive(context?.signal);
+        return api.listProjects();
+      },
+      { readOnlyHint: true, idempotentHint: true },
+    ),
+    definition(
+      "select_project",
+      "Select project",
+      "Save the current project and switch to another browser-local project by stable id.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["projectId"],
+        properties: {
+          projectId: { type: "string", minLength: 1, maxLength: 160 },
+        },
+      },
+      async (input, context) => {
+        assertActive(context?.signal);
+        return api.selectProject(String(input.projectId));
+      },
+    ),
+    definition(
+      "duplicate_project",
+      "Duplicate active project",
+      "Create and select a new browser-local copy without changing the original project.",
+      noArgs,
+      (_input, context) => call("duplicateProject", [], context),
+    ),
+    definition(
+      "delete_project",
+      "Delete project",
+      "Delete one browser-local project by id and select another remaining project.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["projectId"],
+        properties: {
+          projectId: { type: "string", minLength: 1, maxLength: 160 },
+        },
+      },
+      async (input, context) => {
+        assertActive(context?.signal);
+        return api.deleteProject(String(input.projectId));
+      },
+      { destructiveHint: true },
+    ),
+    definition(
       "list_project_presets",
       "List production presets",
       "List researched sprite, tile, web-game, and classic-system canvas presets.",
@@ -263,7 +344,7 @@ export async function registerPixelForgeTools(
     definition(
       "create_from_preset",
       "Create from preset",
-      "Replace the workspace with a production-sized preset and matching palette.",
+      "Add and select a production-sized project with a matching palette while preserving existing projects.",
       {
         type: "object",
         additionalProperties: false,
@@ -274,33 +355,33 @@ export async function registerPixelForgeTools(
         },
       },
       (input, context) => call("createFromPreset", [input], context),
-      { destructiveHint: true },
+      {},
     ),
     definition(
       "create_project",
       "Create project",
-      "Replace the workspace with a new transparent pixel project.",
+      "Add and select a new transparent pixel project while preserving existing projects.",
       {
         type: "object",
         additionalProperties: false,
         required: ["width", "height"],
         properties: {
-          width: integer(1, 1024, "Canvas width in pixels."),
-          height: integer(1, 1024, "Canvas height in pixels."),
+          width: integer(1, 4096, "Canvas width in pixels."),
+          height: integer(1, 4096, "Canvas height in pixels."),
           name: { type: "string", maxLength: 120, description: "Project name." },
         },
       },
       (input, context) => call("createProject", [input], context),
-      { destructiveHint: true },
+      {},
     ),
     definition(
       "image_to_pixel",
-      "Convert image to pixel art",
-      "Decode a bounded PNG, JPEG, or WebP data URL, downsample it, quantize its palette, apply optional dithering, and replace the workspace with an editable pixel project.",
+      "Reconstruct image as pixel art",
+      "Create a new editable project from a bounded image. Supports source-exact or dynamic target resolution, transparent-margin trimming, subject occupancy, hard alpha, palette quantization, and grid sampling.",
       {
         type: "object",
         additionalProperties: false,
-        required: ["imageDataUrl", "width", "height"],
+        required: ["imageDataUrl"],
         properties: {
           imageDataUrl: {
             type: "string",
@@ -309,8 +390,13 @@ export async function registerPixelForgeTools(
             description: "Base64 image data URL; arbitrary remote URLs are not accepted.",
           },
           name: { type: "string", maxLength: 120 },
-          width: integer(1, 1024, "Editable output width."),
-          height: integer(1, 1024, "Editable output height."),
+          resolutionMode: {
+            type: "string",
+            enum: ["source-exact", "auto-faithful", "custom"],
+            description: "Defaults to auto-faithful. Custom requires width and height.",
+          },
+          width: integer(1, 4096, "Editable output width for custom mode."),
+          height: integer(1, 4096, "Editable output height for custom mode."),
           maxColors: integer(2, 64, "Adaptive palette size."),
           dither: {
             type: "string",
@@ -320,6 +406,9 @@ export async function registerPixelForgeTools(
           sampling: { type: "string", enum: ["smooth", "nearest"] },
           alphaThreshold: integer(0, 255),
           preserveAlpha: boolean("Preserve alpha values above the cutoff."),
+          trimTransparent: boolean("Crop transparent source margins before fitting."),
+          targetOccupancy: number(0.1, 1, "Share of the canvas occupied by the visible subject."),
+          hardAlpha: boolean("Convert retained edge pixels to fully opaque pixels."),
         },
       },
       async (input, context) => {
@@ -328,8 +417,15 @@ export async function registerPixelForgeTools(
           {
             imageDataUrl: String(input.imageDataUrl),
             name: typeof input.name === "string" ? input.name : undefined,
-            width: Number(input.width),
-            height: Number(input.height),
+            width:
+              input.width === undefined ? undefined : Number(input.width),
+            height:
+              input.height === undefined ? undefined : Number(input.height),
+            resolutionMode: input.resolutionMode as
+              | "source-exact"
+              | "auto-faithful"
+              | "custom"
+              | undefined,
             maxColors:
               input.maxColors === undefined ? undefined : Number(input.maxColors),
             dither: input.dither as
@@ -347,6 +443,18 @@ export async function registerPixelForgeTools(
               input.preserveAlpha === undefined
                 ? undefined
                 : input.preserveAlpha === true,
+            trimTransparent:
+              input.trimTransparent === undefined
+                ? undefined
+                : input.trimTransparent === true,
+            targetOccupancy:
+              input.targetOccupancy === undefined
+                ? undefined
+                : Number(input.targetOccupancy),
+            hardAlpha:
+              input.hardAlpha === undefined
+                ? undefined
+                : input.hardAlpha === true,
           },
           context?.signal,
         );
@@ -354,7 +462,95 @@ export async function registerPixelForgeTools(
         onStatus?.("pixelizeImage completed");
         return output;
       },
-      { destructiveHint: true },
+      {},
+    ),
+    definition(
+      "animation_from_images",
+      "Create animation from images",
+      "Align two or more source images into animation frames, separate pixels shared by every frame from motion details when memory allows, and add the result as a new project.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["imageDataUrls"],
+        properties: {
+          imageDataUrls: {
+            type: "array",
+            minItems: 2,
+            maxItems: 120,
+            items: {
+              type: "string",
+              pattern: "^data:image/(png|jpeg|webp);base64,",
+              maxLength: 22400000,
+            },
+          },
+          sourceNames: {
+            type: "array",
+            maxItems: 120,
+            items: { type: "string", maxLength: 180 },
+          },
+          name: { type: "string", maxLength: 120 },
+          resolutionMode: {
+            type: "string",
+            enum: ["source-exact", "auto-faithful", "custom"],
+          },
+          width: integer(1, 4096),
+          height: integer(1, 4096),
+          maxColors: integer(2, 64),
+          alphaThreshold: integer(0, 255),
+          targetOccupancy: number(0.1, 1),
+          fps: integer(1, 60),
+          loopMode: {
+            type: "string",
+            enum: ["loop", "once", "ping-pong"],
+          },
+          separateLayers: boolean("Separate common pixels from per-frame motion details."),
+        },
+      },
+      async (input, context) => {
+        assertActive(context?.signal);
+        return api.createAnimationFromImages(
+          {
+            imageDataUrls: (input.imageDataUrls as unknown[]).map(String),
+            sourceNames: Array.isArray(input.sourceNames)
+              ? input.sourceNames.map(String)
+              : undefined,
+            name: typeof input.name === "string" ? input.name : undefined,
+            resolutionMode: input.resolutionMode as
+              | "source-exact"
+              | "auto-faithful"
+              | "custom"
+              | undefined,
+            width:
+              input.width === undefined ? undefined : Number(input.width),
+            height:
+              input.height === undefined ? undefined : Number(input.height),
+            maxColors:
+              input.maxColors === undefined
+                ? undefined
+                : Number(input.maxColors),
+            alphaThreshold:
+              input.alphaThreshold === undefined
+                ? undefined
+                : Number(input.alphaThreshold),
+            targetOccupancy:
+              input.targetOccupancy === undefined
+                ? undefined
+                : Number(input.targetOccupancy),
+            fps: input.fps === undefined ? undefined : Number(input.fps),
+            loopMode: input.loopMode as
+              | "loop"
+              | "once"
+              | "ping-pong"
+              | undefined,
+            separateLayers:
+              input.separateLayers === undefined
+                ? undefined
+                : input.separateLayers === true,
+          },
+          context?.signal,
+        );
+      },
+      {},
     ),
     definition(
       "reference_image.get_state",
@@ -574,14 +770,14 @@ export async function registerPixelForgeTools(
     definition(
       "reference_image.pixelize",
       "Convert current reference to pixel art",
-      "Reuse the current browser-local reference as image-to-pixel input and replace the canvas with an editable pixel project.",
+      "Reuse the current browser-local reference as image-to-pixel input and add the result as a new editable project.",
       {
         type: "object",
         additionalProperties: false,
         properties: {
           name: { type: "string", maxLength: 120 },
-          width: integer(1, 1024, "Defaults to the current project width."),
-          height: integer(1, 1024, "Defaults to the current project height."),
+          width: integer(1, 4096, "Defaults to the current project width."),
+          height: integer(1, 4096, "Defaults to the current project height."),
           maxColors: integer(2, 64, "Adaptive palette size."),
           dither: {
             type: "string",
@@ -591,6 +787,9 @@ export async function registerPixelForgeTools(
           sampling: { type: "string", enum: ["smooth", "nearest"] },
           alphaThreshold: integer(0, 255),
           preserveAlpha: boolean("Preserve alpha values above the cutoff."),
+          trimTransparent: boolean("Crop transparent source margins before fitting."),
+          targetOccupancy: number(0.1, 1),
+          hardAlpha: boolean("Convert retained edge pixels to fully opaque pixels."),
         },
       },
       async (input, context) => {
@@ -621,6 +820,18 @@ export async function registerPixelForgeTools(
               input.preserveAlpha === undefined
                 ? undefined
                 : input.preserveAlpha === true,
+            trimTransparent:
+              input.trimTransparent === undefined
+                ? undefined
+                : input.trimTransparent === true,
+            targetOccupancy:
+              input.targetOccupancy === undefined
+                ? undefined
+                : Number(input.targetOccupancy),
+            hardAlpha:
+              input.hardAlpha === undefined
+                ? undefined
+                : input.hardAlpha === true,
           },
           context?.signal,
         );
@@ -628,12 +839,12 @@ export async function registerPixelForgeTools(
         onStatus?.("pixelizeReference completed");
         return output;
       },
-      { destructiveHint: true },
+      {},
     ),
     definition(
       "import_project",
       "Import project data",
-      "Replace the workspace from a complete PixelForge project JSON object.",
+      "Add and select a complete PixelForge project JSON object while preserving existing projects.",
       {
         type: "object",
         additionalProperties: false,
@@ -641,7 +852,7 @@ export async function registerPixelForgeTools(
         properties: { project: { type: "object", description: "PixelForge project object." } },
       },
       (input, context) => call("importProject", [input.project], context),
-      { destructiveHint: true },
+      {},
     ),
     definition(
       "rename_project",
@@ -664,8 +875,8 @@ export async function registerPixelForgeTools(
         additionalProperties: false,
         required: ["width", "height"],
         properties: {
-          width: integer(1, 1024),
-          height: integer(1, 1024),
+          width: integer(1, 4096),
+          height: integer(1, 4096),
           anchor: {
             type: "string",
             enum: [
@@ -824,10 +1035,10 @@ export async function registerPixelForgeTools(
                 additionalProperties: false,
                 required: ["x", "y", "width", "height"],
                 properties: {
-                  x: integer(0, 1023),
-                  y: integer(0, 1023),
-                  width: integer(1, 1024),
-                  height: integer(1, 1024),
+                  x: integer(0, 4095),
+                  y: integer(0, 4095),
+                  width: integer(1, 4096),
+                  height: integer(1, 4096),
                 },
               },
               { type: "null" },
@@ -1009,7 +1220,7 @@ export async function registerPixelForgeTools(
   );
 
   const exports: Array<{
-    format: "png" | "gif" | "spritesheet" | "project";
+    format: "png" | "gif" | "spritesheet" | "project" | "game-bundle";
     schema: Record<string, unknown>;
     description: string;
   }> = [
@@ -1047,11 +1258,39 @@ export async function registerPixelForgeTools(
       description: "Download the editable PixelForge project file.",
       schema: noArgs,
     },
+    {
+      format: "game-bundle",
+      description: "Download a game-ready ZIP with transparent sprite sheets, optional PNG frame sequence, atlas metadata, timing, pivots, engine helpers, and a README.",
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          engine: {
+            type: "string",
+            enum: [
+              "universal",
+              "unity",
+              "godot",
+              "phaser",
+              "unreal",
+              "libgdx",
+              "gamemaker",
+              "rpg-maker",
+              "love2d",
+            ],
+          },
+          scale: integer(1, 16),
+          columns: integer(1, 9999),
+          gap: integer(0, 128),
+          includeFrameSequence: boolean(),
+        },
+      },
+    },
   ];
   exports.forEach((item) => {
     tools.push(
       definition(
-        "export_" + item.format,
+        "export_" + item.format.replace("-", "_"),
         "Export " + item.format,
         item.description,
         item.schema,

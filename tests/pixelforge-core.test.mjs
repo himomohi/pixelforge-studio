@@ -81,8 +81,8 @@ test("production presets cover web games, classic systems, and detailed canvases
     [getProjectPreset("web-detailed-640x360").width, getProjectPreset("playdate-screen").height],
     [640, 240],
   );
-  assert.equal(MAX_CANVAS_DIMENSION, 1024);
-  assert.equal(recommendedZoom(1024, 1024), 1);
+  assert.equal(MAX_CANVAS_DIMENSION, 4096);
+  assert.equal(recommendedZoom(1254, 1254), 1);
   assert.ok(projectPresets.length >= 20);
 });
 
@@ -166,6 +166,30 @@ test("animated GIF export emits a complete GIF89a file", async () => {
   assert.ok(bytes.length > 800);
 });
 
+test("game bundle ZIP writer packages named assets", async () => {
+  const { createStoredZip } = await vite.ssrLoadModule(
+    "/lib/pixelforge/game-export.ts",
+  );
+  const blob = createStoredZip([
+    { name: "metadata/atlas.json", bytes: new TextEncoder().encode("{}") },
+    {
+      name: "engine/godot-sprite-frames.tres",
+      bytes: new TextEncoder().encode("[resource]"),
+    },
+    {
+      name: "frames/frame-000.png",
+      bytes: new Uint8Array([137, 80, 78, 71]),
+    },
+  ]);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  assert.equal(blob.type, "application/zip");
+  assert.deepEqual([...bytes.slice(0, 4)], [0x50, 0x4b, 0x03, 0x04]);
+  const text = new TextDecoder().decode(bytes);
+  assert.match(text, /metadata\/atlas\.json/);
+  assert.match(text, /engine\/godot-sprite-frames\.tres/);
+  assert.match(text, /frames\/frame-000\.png/);
+});
+
 test("WebMCP registers a unique, cancellable tool for every workflow", async () => {
   const { registerPixelForgeTools } = await vite.ssrLoadModule(
     "/lib/pixelforge/webmcp.ts",
@@ -206,12 +230,17 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
   try {
     const cleanup = await registerPixelForgeTools(api);
     assert.equal(typeof cleanup, "function");
-    assert.equal(registrations.length, 58);
-    assert.equal(new Set(registrations.map(({ tool }) => tool.name)).size, 58);
+    assert.equal(registrations.length, 64);
+    assert.equal(new Set(registrations.map(({ tool }) => tool.name)).size, 64);
     for (const name of [
+      "list_projects",
+      "select_project",
+      "duplicate_project",
       "list_project_presets",
       "create_from_preset",
       "image_to_pixel",
+      "animation_from_images",
+      "export_game_bundle",
       "reference_image.get_state",
       "reference_image.set_from_data_url",
       "reference_image.set_mode",
@@ -243,7 +272,7 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
     const imageTool = registrations.find(
       ({ tool }) => tool.name === "image_to_pixel",
     ).tool;
-    assert.equal(imageTool.inputSchema.properties.width.maximum, 1024);
+    assert.equal(imageTool.inputSchema.properties.width.maximum, 4096);
     await assert.rejects(
       () =>
         imageTool.execute(

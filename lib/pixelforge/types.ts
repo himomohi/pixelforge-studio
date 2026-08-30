@@ -111,6 +111,23 @@ export type Selection = {
   height: number;
 } | null;
 
+export interface AnimationTag {
+  name: string;
+  from: number;
+  to: number;
+  loop: boolean;
+}
+
+export interface AnimationMetadata {
+  fps: number;
+  loopMode: "loop" | "once" | "ping-pong";
+  pivot: { x: number; y: number; preset: "bottom-center" | "center" | "custom" };
+  tags: AnimationTag[];
+  sourceNames?: string[];
+  generatedFromSequence?: boolean;
+  layerSeparation?: "common-motion" | "none";
+}
+
 export interface PixelProject {
   version: 1;
   id: string;
@@ -128,6 +145,7 @@ export interface PixelProject {
   symmetry: Symmetry;
   selection: Selection;
   referenceImage?: ReferenceImageState;
+  animation?: AnimationMetadata;
 }
 
 /** Compatibility name used by persistence, import, and export modules. */

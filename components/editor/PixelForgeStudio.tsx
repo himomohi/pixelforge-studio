@@ -3,12 +3,15 @@
 import * as React from "react";
 import {
   Bot,
+  Check,
   ChevronDown,
+  Copy,
   Download,
   FileImage,
   FileJson,
   FilePlus2,
   FolderOpen,
+  FolderKanban,
   Grid3X3,
   Image as ImageIcon,
   Keyboard,
@@ -19,6 +22,7 @@ import {
   Save,
   Settings2,
   Sparkles,
+  Trash2,
   Undo2,
   ZoomIn,
   ZoomOut,
@@ -95,6 +99,8 @@ import {
   pixelizeRaster,
   type PixelizeOptions,
 } from "@/lib/pixelforge/pixelize";
+import { createAnimationProjectFromRasters } from "@/lib/pixelforge/animation";
+import { exportUniversalGameBundle } from "@/lib/pixelforge/game-export";
 import {
   assertReferenceMode,
   assertReferenceOpacity,
@@ -104,6 +110,8 @@ import {
 } from "@/lib/pixelforge/reference-image";
 import {
   getProjectPreset,
+  MAX_CANVAS_DIMENSION,
+  MAX_PROJECT_PIXEL_CELLS,
   projectPresets,
   recommendedZoom,
 } from "@/lib/pixelforge/presets";
@@ -128,10 +136,15 @@ import type {
 
 const WEBMCP_TOOLS: WebMCPTool[] = [
   ["get_project_state", "Read project, frame, layer, and tool state"],
+  ["list_projects", "List every locally saved project"],
+  ["select_project", "Switch projects without losing the current one"],
+  ["duplicate_project", "Create a new project copy"],
+  ["delete_project", "Delete one local project"],
   ["list_project_presets", "List sprite, tile, web-game, and console presets"],
   ["create_from_preset", "Create a project from a production preset"],
   ["create_project", "Create a pixel canvas"],
   ["image_to_pixel", "Convert a base64 image into editable pixel art"],
+  ["animation_from_images", "Build aligned animation frames and motion layers"],
   ["reference_image.get_state", "Read reference image metadata and view state"],
   ["reference_image.open_picker", "Request the local reference image picker"],
   ["reference_image.set_from_data_url", "Set a bounded browser-local reference image"],
@@ -185,6 +198,7 @@ const WEBMCP_TOOLS: WebMCPTool[] = [
   ["export_gif", "Download an animated GIF"],
   ["export_spritesheet", "Download a sheet and metadata"],
   ["export_project", "Download the editable project"],
+  ["export_game_bundle", "Download a game-engine-ready ZIP bundle"],
 ].map(([name, description]) => ({ name, description }));
 
 function result(message: string, project?: PixelProject): ToolOutput {
@@ -315,21 +329,98 @@ export function PixelForgeStudio() {
 
   const handleExport = async (options: ExportOptions) => {
       try {
-        if (options.format === "gif") {
+        if (options.format === "game-bundle") {
+          const latest = editor.projectRef.current;
+          const bundle = await exportUniversalGameBundle(latest, {
+            engine: options.engine,
+            scale: options.scale,
+            columns: options.columns,
+            gap: options.spacing,
+            includeFrameSequence: options.includeFrameSequence,
+          });
+          downloadBlob(bundle.blob, bundle.filename);
+        } else if (options.format === "gif") {
           downloadGif(options.scale, options.loop);
         } else {
           await downloadSheet(options.scale, options.columns, options.spacing);
         }
         setExportOpen(false);
-        toast.success(options.format === "gif" ? "GIF exported" : "Sprite sheet exported");
+        toast.success(
+          options.format === "game-bundle"
+            ? "Game-ready ZIP exported"
+            : options.format === "gif"
+              ? "GIF exported"
+              : "Sprite sheet exported",
+        );
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Export failed");
       }
   };
 
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const selectedFiles = [...(event.target.files ?? [])];
     event.target.value = "";
+    if (selectedFiles.length > 1) {
+      try {
+        if (selectedFiles.some((file) => !file.type.startsWith("image/"))) {
+          throw new Error("Select only images when creating an animation sequence.");
+        }
+        const dimensions = await Promise.all(
+          selectedFiles.map((file) => inspectRaster(file)),
+        );
+        const sourceWidth = Math.max(...dimensions.map((item) => item.width));
+        const sourceHeight = Math.max(...dimensions.map((item) => item.height));
+        const exactFits =
+          sourceWidth <= MAX_CANVAS_DIMENSION &&
+          sourceHeight <= MAX_CANVAS_DIMENSION &&
+          sourceWidth *
+            sourceHeight *
+            selectedFiles.length *
+            2 <=
+            MAX_PROJECT_PIXEL_CELLS;
+        const target = exactFits
+          ? { width: sourceWidth, height: sourceHeight }
+          : (() => {
+              const longest = Math.max(sourceWidth, sourceHeight);
+              const scale = Math.min(1, 256 / longest);
+              return {
+                width: Math.max(1, Math.round(sourceWidth * scale)),
+                height: Math.max(1, Math.round(sourceHeight * scale)),
+              };
+            })();
+        const next = await createAnimationProjectFromRasters(
+          selectedFiles,
+          selectedFiles[0]?.name.replace(/\.[^.]+$/, "") || "Image animation",
+          {
+            ...target,
+            maxColors: 48,
+            dither: "none",
+            fit: "contain",
+            sampling: "smooth",
+            alphaThreshold: 16,
+            preserveAlpha: false,
+            hardAlpha: true,
+            trimTransparent: true,
+            targetOccupancy: 0.92,
+            fps: 8,
+            loopMode: "loop",
+            separateLayers: true,
+            sourceNames: selectedFiles.map((file) => file.name),
+          },
+        );
+        editor.replaceProject(next, false);
+        editor.setZoom(recommendedZoom(next.width, next.height));
+        toast.success(
+          `${next.frames.length}-frame animation created with ${next.layers.length} aligned layers`,
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Animation import failed",
+        );
+      }
+      return;
+    }
+    const file = selectedFiles[0];
     if (!file) return;
     try {
       const isProject =
@@ -338,7 +429,7 @@ export function PixelForgeStudio() {
         file.name.endsWith(".json");
       if (isProject) {
         const next = importProjectJson(await file.text());
-        editor.replaceProject(next);
+        editor.replaceProject(next, false);
         editor.setZoom(recommendedZoom(next.width, next.height));
         toast.success("Project opened");
         return;
@@ -429,7 +520,7 @@ export function PixelForgeStudio() {
           overlayRect: { ...referenceState.overlayRect },
         };
       }
-      editor.replaceProject(next);
+      editor.replaceProject(next, false);
       editor.setZoom(recommendedZoom(next.width, next.height));
       setPixelizeOpen(false);
       setPixelSource(null);
@@ -562,6 +653,47 @@ export function PixelForgeStudio() {
         throw new DOMException("The WebMCP operation was cancelled.", "AbortError");
       }
     };
+    const resolveImageTarget = async (
+      blobs: Blob[],
+      input: {
+        width?: number;
+        height?: number;
+        resolutionMode?: "source-exact" | "auto-faithful" | "custom";
+      },
+    ) => {
+      const dimensions = await Promise.all(blobs.map((blob) => inspectRaster(blob)));
+      const sourceWidth = Math.max(...dimensions.map((item) => item.width));
+      const sourceHeight = Math.max(...dimensions.map((item) => item.height));
+      const mode = input.resolutionMode ?? "auto-faithful";
+      if (mode === "custom") {
+        if (!input.width || !input.height) {
+          throw new Error("Custom resolution requires width and height.");
+        }
+        return { width: input.width, height: input.height };
+      }
+      if (mode === "source-exact") {
+        if (
+          sourceWidth > MAX_CANVAS_DIMENSION ||
+          sourceHeight > MAX_CANVAS_DIMENSION ||
+          sourceWidth * sourceHeight > MAX_PROJECT_PIXEL_CELLS
+        ) {
+          throw new Error(
+            "The source exceeds the safe exact-resolution canvas limit.",
+          );
+        }
+        return { width: sourceWidth, height: sourceHeight };
+      }
+      const requestedLongest = Math.max(
+        128,
+        Math.ceil(Math.max(sourceWidth, sourceHeight) / 64) * 16,
+      );
+      const longest = Math.min(512, requestedLongest);
+      const scale = Math.min(1, longest / Math.max(sourceWidth, sourceHeight));
+      return {
+        width: Math.max(1, Math.round(sourceWidth * scale)),
+        height: Math.max(1, Math.round(sourceHeight * scale)),
+      };
+    };
     const api: EditorAutomationApi = {
       getProjectState: ({ includePixels = false } = {}) => {
         const latest = projectRef.current;
@@ -611,6 +743,47 @@ export function PixelForgeStudio() {
           description: preset.description,
           reference: preset.reference ?? null,
         })) as ToolOutput,
+      listProjects: async () => {
+        const records = await editor.refreshProjects();
+        return records.map((record) => ({
+          projectId: record.key,
+          name: record.project.name,
+          width: record.project.width,
+          height: record.project.height,
+          frameCount: record.project.frames.length,
+          layerCount: record.project.layers.length,
+          updatedAt: new Date(record.updatedAt).toISOString(),
+          active: record.key === projectRef.current.id,
+        })) as ToolOutput;
+      },
+      selectProject: async (projectId) => {
+        const next = await editor.selectProject(projectId);
+        return {
+          ok: true,
+          message: "Project selected",
+          projectId: next.id,
+          frameCount: next.frames.length,
+          layerCount: next.layers.length,
+          width: next.width,
+          height: next.height,
+        } as ToolOutput;
+      },
+      duplicateProject: () => {
+        const next = editor.duplicateProject();
+        return result("Project duplicated", next);
+      },
+      deleteProject: async (projectId) => {
+        const next = await editor.deleteProject(projectId);
+        return {
+          ok: true,
+          message: "Project deleted",
+          projectId: next.id,
+          frameCount: next.frames.length,
+          layerCount: next.layers.length,
+          deletedProjectId: projectId,
+          activeProjectId: next.id,
+        } as ToolOutput;
+      },
       createFromPreset: (input) => {
         const preset = getProjectPreset(input.presetId);
         if (!preset) return reject("Unknown project preset");
@@ -645,18 +818,21 @@ export function PixelForgeStudio() {
       pixelizeImage: async (input, signal) => {
         assertWebMcpActive(signal);
         const blob = imageDataUrlToBlob(input.imageDataUrl);
+        const target = await resolveImageTarget([blob], input);
         const next = await pixelizeRaster(
           blob,
           input.name || "Agent pixel image",
           {
-            width: input.width,
-            height: input.height,
+            ...target,
             maxColors: input.maxColors,
             dither: input.dither,
             fit: input.fit,
             sampling: input.sampling,
             alphaThreshold: input.alphaThreshold,
             preserveAlpha: input.preserveAlpha,
+            trimTransparent: input.trimTransparent ?? true,
+            targetOccupancy: input.targetOccupancy ?? 0.92,
+            hardAlpha: input.hardAlpha ?? true,
           },
           signal,
         );
@@ -666,7 +842,7 @@ export function PixelForgeStudio() {
           ...referenceState,
           overlayRect: { ...referenceState.overlayRect },
         };
-        editor.replaceProject(next);
+        editor.replaceProject(next, false);
         editor.setZoom(recommendedZoom(next.width, next.height));
         return {
           ok: true,
@@ -676,6 +852,53 @@ export function PixelForgeStudio() {
           height: next.height,
           paletteSize: next.palettes[0]?.colors.length ?? 0,
           source: "data-url",
+        } as ToolOutput;
+      },
+      createAnimationFromImages: async (input, signal) => {
+        assertWebMcpActive(signal);
+        const blobs = input.imageDataUrls.map(imageDataUrlToBlob);
+        const target = await resolveImageTarget(blobs, input);
+        const splitFits =
+          target.width *
+            target.height *
+            blobs.length *
+            2 <=
+          MAX_PROJECT_PIXEL_CELLS;
+        const next = await createAnimationProjectFromRasters(
+          blobs,
+          input.name || "Agent animation",
+          {
+            ...target,
+            maxColors: input.maxColors ?? 48,
+            dither: "none",
+            fit: "contain",
+            sampling: "smooth",
+            alphaThreshold: input.alphaThreshold ?? 16,
+            preserveAlpha: false,
+            hardAlpha: true,
+            trimTransparent: true,
+            targetOccupancy: input.targetOccupancy ?? 0.92,
+            fps: input.fps ?? 8,
+            loopMode: input.loopMode ?? "loop",
+            separateLayers: (input.separateLayers ?? true) && splitFits,
+            sourceNames: input.sourceNames,
+          },
+          signal,
+        );
+        assertWebMcpActive(signal);
+        editor.replaceProject(next, false);
+        editor.setZoom(recommendedZoom(next.width, next.height));
+        return {
+          ok: true,
+          message: "Animation created as a new project",
+          projectId: next.id,
+          width: next.width,
+          height: next.height,
+          frameCount: next.frames.length,
+          layerCount: next.layers.length,
+          layerSeparation: next.animation?.layerSeparation ?? "none",
+          fps: next.animation?.fps ?? null,
+          pivot: next.animation?.pivot ?? null,
         } as ToolOutput;
       },
       getReferenceState: () =>
@@ -802,6 +1025,9 @@ export function PixelForgeStudio() {
             sampling: input.sampling,
             alphaThreshold: input.alphaThreshold,
             preserveAlpha: input.preserveAlpha,
+            trimTransparent: input.trimTransparent ?? true,
+            targetOccupancy: input.targetOccupancy ?? 0.92,
+            hardAlpha: input.hardAlpha ?? true,
           },
           signal,
         );
@@ -811,7 +1037,7 @@ export function PixelForgeStudio() {
           ...referenceState,
           overlayRect: { ...referenceState.overlayRect },
         };
-        editor.replaceProject(next);
+        editor.replaceProject(next, false);
         editor.setZoom(recommendedZoom(next.width, next.height));
         return {
           ok: true,
@@ -828,7 +1054,7 @@ export function PixelForgeStudio() {
       },
       importProject: (value) => {
         const next = importProjectJson(value);
-        editor.replaceProject(next);
+        editor.replaceProject(next, false);
         return result("Project imported", next);
       },
       renameProject: (name) => {
@@ -1223,6 +1449,38 @@ export function PixelForgeStudio() {
             frameCount: output.metadata.frames.length,
           };
         }
+        if (format === "game-bundle") {
+          const engine =
+            options?.engine === "unity" ||
+            options?.engine === "godot" ||
+            options?.engine === "phaser" ||
+            options?.engine === "unreal" ||
+            options?.engine === "libgdx" ||
+            options?.engine === "gamemaker" ||
+            options?.engine === "rpg-maker" ||
+            options?.engine === "love2d"
+              ? options.engine
+              : "universal";
+          const bundle = await exportUniversalGameBundle(latest, {
+            engine,
+            scale,
+            columns: Number(options?.columns || 0) || undefined,
+            gap: Number(options?.gap || 0),
+            includeFrameSequence:
+              options?.includeFrameSequence !== false,
+          });
+          assertWebMcpActive(signal);
+          downloadBlob(bundle.blob, bundle.filename);
+          return {
+            ok: true,
+            message: "Game bundle export completed",
+            filename: bundle.filename,
+            mime: bundle.blob.type,
+            size: bundle.blob.size,
+            files: bundle.files,
+            engine,
+          };
+        }
         const blob = exportProjectJson(latest);
         assertWebMcpActive(signal);
         const filename = base + ".pxforge";
@@ -1314,6 +1572,92 @@ export function PixelForgeStudio() {
           </div>
 
           <div className="mx-2 hidden h-6 w-px bg-[#2b3446] sm:block" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 max-w-44 justify-start gap-1.5 px-2 text-xs"
+              >
+                <FolderKanban className="size-3.5 text-[#66d9ef]" />
+                <span className="truncate">{project.name}</span>
+                <ChevronDown className="ml-auto size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-72">
+              <DropdownMenuLabel className="flex items-center justify-between">
+                Projects
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {editor.projects.length || 1}
+                </span>
+              </DropdownMenuLabel>
+              {editor.projects.map((record) => (
+                <DropdownMenuItem
+                  key={record.key}
+                  onSelect={() => {
+                    void editor
+                      .selectProject(record.key)
+                      .then(() => toast.success(`Opened ${record.project.name}`))
+                      .catch((error) =>
+                        toast.error(
+                          error instanceof Error
+                            ? error.message
+                            : "Project could not be opened",
+                        ),
+                      );
+                  }}
+                >
+                  {record.key === project.id ? (
+                    <Check className="text-[#b8f34a]" />
+                  ) : (
+                    <span className="size-4" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">
+                    {record.project.name}
+                  </span>
+                  <span className="font-mono text-[9px] text-muted-foreground">
+                    {record.project.width}×{record.project.height}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setNewOpen(true)}>
+                <FilePlus2 /> New project
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  const duplicate = editor.duplicateProject();
+                  toast.success(`${duplicate.name} created`);
+                }}
+              >
+                <Copy /> Duplicate current
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-red-300 focus:text-red-200"
+                onSelect={() => {
+                  if (
+                    !window.confirm(
+                      `Delete "${project.name}" from this browser? Export it first if you may need it later.`,
+                    )
+                  ) {
+                    return;
+                  }
+                  void editor
+                    .deleteProject(project.id)
+                    .then(() => toast.success("Project deleted"))
+                    .catch((error) =>
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "Project could not be deleted",
+                      ),
+                    );
+                }}
+              >
+                <Trash2 /> Delete current
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <input
             value={project.name}
             onChange={(event) =>
@@ -1328,7 +1672,7 @@ export function PixelForgeStudio() {
                 name: event.target.value.trim() || "Untitled sprite",
               })
             }
-            className="min-w-0 max-w-44 flex-1 rounded bg-transparent px-2 py-1 text-xs font-medium outline-none hover:bg-white/[.03] focus:bg-[#1a2030] sm:flex-none"
+            className="hidden min-w-0 max-w-44 flex-1 rounded bg-transparent px-2 py-1 text-xs font-medium outline-none hover:bg-white/[.03] focus:bg-[#1a2030] lg:block lg:flex-none"
             aria-label="Project name"
           />
           <span className="hidden rounded border border-[#2e384b] bg-[#111722] px-2 py-1 font-mono text-[9px] text-[#8993a6] md:inline">
@@ -1645,6 +1989,7 @@ export function PixelForgeStudio() {
           ref={fileInputRef}
           type="file"
           accept=".pxforge,.json,image/png,image/jpeg,image/webp"
+          multiple
           className="hidden"
           onChange={(event) => void handleImport(event)}
         />
@@ -1849,7 +2194,7 @@ function FileMenu({
         <DropdownMenuShortcut>Ctrl N</DropdownMenuShortcut>
       </DropdownMenuItem>
       <DropdownMenuItem onSelect={onOpen}>
-        <FolderOpen /> Open project or image
+        <FolderOpen /> Open project, image, or sequence
         <DropdownMenuShortcut>Ctrl O</DropdownMenuShortcut>
       </DropdownMenuItem>
       <DropdownMenuItem onSelect={onProject}>

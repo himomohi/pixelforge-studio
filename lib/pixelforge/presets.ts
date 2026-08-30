@@ -1,5 +1,5 @@
-export const MAX_CANVAS_DIMENSION = 1024;
-export const MAX_PROJECT_PIXEL_CELLS = 8_388_608;
+export const MAX_CANVAS_DIMENSION = 4096;
+export const MAX_PROJECT_PIXEL_CELLS = 16_777_216;
 
 export type ProjectPresetCategory =
   | "sprites"

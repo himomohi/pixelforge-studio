@@ -8,6 +8,7 @@ import {
   createProjectRepository,
   getActiveProjectKey,
   setActiveProjectKey,
+  type ProjectRecord,
 } from "@/lib/pixelforge/storage";
 import { curatedPalettes } from "@/lib/pixelforge/palettes";
 import { recommendedZoom } from "@/lib/pixelforge/presets";
@@ -49,6 +50,7 @@ export function usePixelEditor() {
   const [showGrid, setShowGrid] = React.useState(true);
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [hydrated, setHydrated] = React.useState(false);
+  const [projects, setProjects] = React.useState<ProjectRecord[]>([]);
   const repository = React.useMemo(() => createProjectRepository(), []);
   const project = history.present;
   const projectRef = React.useRef(project);
@@ -74,19 +76,36 @@ export function usePixelEditor() {
     setHistory(nextHistory);
   }, []);
 
-  const replaceProject = React.useCallback((next: PixelProject, record = true) => {
-    const copy = projectCopy(next);
-    const current = historyRef.current;
-    const nextHistory = {
-      past: record ? [...current.past.slice(-79), current.present] : [],
-      present: copy,
-      future: [],
-    };
-    historyRef.current = nextHistory;
-    projectRef.current = copy;
-    setHistory(nextHistory);
-    setActiveProjectKey(next.id);
+  const rememberRecord = React.useCallback((record: ProjectRecord) => {
+    setProjects((current) =>
+      [record, ...current.filter((item) => item.key !== record.key)].sort(
+        (left, right) => right.updatedAt - left.updatedAt,
+      ),
+    );
   }, []);
+
+  const replaceProject = React.useCallback(
+    (next: PixelProject, record = true) => {
+      const copy = projectCopy(next);
+      const current = historyRef.current;
+      if (current.present.id !== copy.id) {
+        void repository
+          .save(current.present.id, current.present)
+          .then(rememberRecord);
+      }
+      const nextHistory = {
+        past: record ? [...current.past.slice(-79), current.present] : [],
+        present: copy,
+        future: [],
+      };
+      historyRef.current = nextHistory;
+      projectRef.current = copy;
+      setHistory(nextHistory);
+      setActiveProjectKey(next.id);
+      void repository.save(copy.id, copy).then(rememberRecord);
+    },
+    [rememberRecord, repository],
+  );
 
   const undo = React.useCallback(() => {
     const current = historyRef.current;
@@ -137,12 +156,59 @@ export function usePixelEditor() {
           input.background ?? "#111827",
         );
       }
-      replaceProject(next);
+      replaceProject(next, false);
       setZoom(recommendedZoom(input.width, input.height));
       return next;
     },
     [replaceProject],
   );
+
+  const selectProject = React.useCallback(
+    async (key: string) => {
+      if (key === projectRef.current.id) return projectRef.current;
+      const current = projectRef.current;
+      rememberRecord(await repository.save(current.id, current));
+      const saved = await repository.load(key);
+      if (!saved?.project) throw new Error("The selected project is unavailable.");
+      replaceProject(saved.project, false);
+      setZoom(recommendedZoom(saved.project.width, saved.project.height));
+      return saved.project;
+    },
+    [rememberRecord, replaceProject, repository],
+  );
+
+  const duplicateProject = React.useCallback(() => {
+    const current = projectRef.current;
+    const shell = createProject(current.width, current.height, current.name);
+    const duplicate = {
+      ...projectCopy(current),
+      id: shell.id,
+      name: `${current.name} copy`,
+    };
+    replaceProject(duplicate, false);
+    return duplicate;
+  }, [replaceProject]);
+
+  const deleteProject = React.useCallback(
+    async (key: string) => {
+      await repository.delete(key);
+      const remaining = (await repository.list()).filter(
+        (record) => record.key !== key,
+      );
+      setProjects(remaining);
+      if (projectRef.current.id !== key) return projectRef.current;
+      const replacement = remaining[0]?.project ?? createProject(32, 32, "Untitled sprite");
+      replaceProject(replacement, false);
+      return replacement;
+    },
+    [replaceProject, repository],
+  );
+
+  const refreshProjects = React.useCallback(async () => {
+    const records = await repository.list();
+    setProjects(records);
+    return records;
+  }, [repository]);
 
   const commitPixels = React.useCallback(
     (patches: PixelPatch[]) => {
@@ -179,10 +245,18 @@ export function usePixelEditor() {
     let cancelled = false;
     const restore = async () => {
       const key = getActiveProjectKey();
-      if (key) {
-        const saved = await repository.load(key);
-        if (!cancelled && saved?.project) {
-          historyRef.current = { past: [], present: saved.project, future: [] };
+      const records = await repository.list();
+      const saved =
+        (key ? records.find((record) => record.key === key) : undefined) ??
+        records[0];
+      if (!cancelled) {
+        setProjects(records);
+        if (saved?.project) {
+          historyRef.current = {
+            past: [],
+            present: saved.project,
+            future: [],
+          };
           projectRef.current = saved.project;
           setHistory(historyRef.current);
         }
@@ -198,11 +272,11 @@ export function usePixelEditor() {
   React.useEffect(() => {
     if (!hydrated) return;
     const timer = window.setTimeout(() => {
-      void repository.save(project.id, project);
+      void repository.save(project.id, project).then(rememberRecord);
       setActiveProjectKey(project.id);
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [hydrated, project, repository]);
+  }, [hydrated, project, rememberRecord, repository]);
 
   React.useEffect(() => {
     if (!isPlaying || project.frames.length < 2) return;
@@ -240,5 +314,10 @@ export function usePixelEditor() {
     isPlaying,
     setIsPlaying,
     hydrated,
+    projects,
+    selectProject,
+    duplicateProject,
+    deleteProject,
+    refreshProjects,
   };
 }
