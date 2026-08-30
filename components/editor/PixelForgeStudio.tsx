@@ -81,6 +81,7 @@ import { useReferenceImage } from "@/hooks/use-reference-image";
 import { celFor } from "@/lib/pixelforge/project";
 import {
   adjacentFrameId,
+  compositeFrameRgba,
   compositeFramePixels,
 } from "@/lib/pixelforge/render";
 import {
@@ -94,10 +95,16 @@ import {
 } from "@/lib/pixelforge/export";
 import { importProjectJson } from "@/lib/pixelforge/import";
 import {
+  applyFidelityProfile,
+  auditRasterFidelity,
   imageDataUrlToBlob,
   inspectRaster,
   pixelizeRaster,
+  pixelizeRasterDetailed,
+  resolveFaithfulTarget,
+  type PixelFidelityMode,
   type PixelizeOptions,
+  type PixelResolutionMode,
 } from "@/lib/pixelforge/pixelize";
 import { createAnimationProjectFromRasters } from "@/lib/pixelforge/animation";
 import { exportUniversalGameBundle } from "@/lib/pixelforge/game-export";
@@ -143,8 +150,8 @@ const WEBMCP_TOOLS: WebMCPTool[] = [
   ["list_project_presets", "List sprite, tile, web-game, and console presets"],
   ["create_from_preset", "Create a project from a production preset"],
   ["create_project", "Create a pixel canvas"],
-  ["image_to_pixel", "Convert a base64 image into editable pixel art"],
-  ["animation_from_images", "Build aligned animation frames and motion layers"],
+  ["image_to_pixel", "Strict-99 dynamic reconstruction with measured fidelity"],
+  ["animation_from_images", "Build proportion-safe animation frames and motion layers"],
   ["reference_image.get_state", "Read reference image metadata and view state"],
   ["reference_image.open_picker", "Request the local reference image picker"],
   ["reference_image.set_from_data_url", "Set a bounded browser-local reference image"],
@@ -158,7 +165,8 @@ const WEBMCP_TOOLS: WebMCPTool[] = [
   ["reference_image.fit", "Fit the reference inside its viewport"],
   ["reference_image.set_pinned", "Pin the floating reference window"],
   ["reference_image.set_collapsed", "Collapse the desktop reference panel"],
-  ["reference_image.pixelize", "Convert the current reference into editable pixels"],
+  ["reference_image.pixelize", "Strict-99 reconstruction from the current reference"],
+  ["reference_image.audit_fidelity", "Verify the active frame against the 0.99 gate"],
   ["import_project", "Restore a complete project object"],
   ["rename_project", "Rename the project"],
   ["resize_canvas", "Resize and anchor every cel"],
@@ -658,40 +666,25 @@ export function PixelForgeStudio() {
       input: {
         width?: number;
         height?: number;
-        resolutionMode?: "source-exact" | "auto-faithful" | "custom";
+        resolutionMode?: PixelResolutionMode;
+        fidelityMode?: PixelFidelityMode;
+        trimTransparent?: boolean;
+        expectedCels?: number;
       },
     ) => {
-      const dimensions = await Promise.all(blobs.map((blob) => inspectRaster(blob)));
-      const sourceWidth = Math.max(...dimensions.map((item) => item.width));
-      const sourceHeight = Math.max(...dimensions.map((item) => item.height));
-      const mode = input.resolutionMode ?? "auto-faithful";
-      if (mode === "custom") {
-        if (!input.width || !input.height) {
-          throw new Error("Custom resolution requires width and height.");
-        }
-        return { width: input.width, height: input.height };
+      const inspections = await Promise.all(blobs.map((blob) => inspectRaster(blob)));
+      const target = resolveFaithfulTarget(inspections, input);
+      const expectedCels = Math.max(1, Math.floor(input.expectedCels ?? 1));
+      const allowedArea = Math.floor(MAX_PROJECT_PIXEL_CELLS / expectedCels);
+      if (target.width * target.height <= allowedArea) return target;
+      if (target.resolutionMode !== "auto-faithful") {
+        throw new Error("The requested resolution exceeds the animation pixel budget.");
       }
-      if (mode === "source-exact") {
-        if (
-          sourceWidth > MAX_CANVAS_DIMENSION ||
-          sourceHeight > MAX_CANVAS_DIMENSION ||
-          sourceWidth * sourceHeight > MAX_PROJECT_PIXEL_CELLS
-        ) {
-          throw new Error(
-            "The source exceeds the safe exact-resolution canvas limit.",
-          );
-        }
-        return { width: sourceWidth, height: sourceHeight };
-      }
-      const requestedLongest = Math.max(
-        128,
-        Math.ceil(Math.max(sourceWidth, sourceHeight) / 64) * 16,
-      );
-      const longest = Math.min(512, requestedLongest);
-      const scale = Math.min(1, longest / Math.max(sourceWidth, sourceHeight));
+      const scale = Math.sqrt(allowedArea / (target.width * target.height));
       return {
-        width: Math.max(1, Math.round(sourceWidth * scale)),
-        height: Math.max(1, Math.round(sourceHeight * scale)),
+        ...target,
+        width: Math.max(1, Math.floor(target.width * scale)),
+        height: Math.max(1, Math.floor(target.height * scale)),
       };
     };
     const api: EditorAutomationApi = {
@@ -818,11 +811,18 @@ export function PixelForgeStudio() {
       pixelizeImage: async (input, signal) => {
         assertWebMcpActive(signal);
         const blob = imageDataUrlToBlob(input.imageDataUrl);
-        const target = await resolveImageTarget([blob], input);
-        const next = await pixelizeRaster(
+        const fidelityMode = input.fidelityMode ?? "strict-99";
+        const target = await resolveImageTarget([blob], {
+          ...input,
+          fidelityMode,
+          resolutionMode:
+            input.resolutionMode ??
+            (input.width && input.height ? "custom" : "auto-faithful"),
+        });
+        const converted = await pixelizeRasterDetailed(
           blob,
           input.name || "Agent pixel image",
-          {
+          applyFidelityProfile({
             ...target,
             maxColors: input.maxColors,
             dither: input.dither,
@@ -831,12 +831,13 @@ export function PixelForgeStudio() {
             alphaThreshold: input.alphaThreshold,
             preserveAlpha: input.preserveAlpha,
             trimTransparent: input.trimTransparent ?? true,
-            targetOccupancy: input.targetOccupancy ?? 0.92,
-            hardAlpha: input.hardAlpha ?? true,
-          },
+            targetOccupancy: input.targetOccupancy ?? 0.98,
+            hardAlpha: input.hardAlpha ?? false,
+          }, fidelityMode),
           signal,
         );
         assertWebMcpActive(signal);
+        const next = converted.project;
         const referenceState = reference.getState();
         next.referenceImage = {
           ...referenceState,
@@ -852,40 +853,72 @@ export function PixelForgeStudio() {
           height: next.height,
           paletteSize: next.palettes[0]?.colors.length ?? 0,
           source: "data-url",
+          fidelityMode,
+          fidelity: JSON.parse(JSON.stringify(converted.fidelity)) as ToolOutput,
         } as ToolOutput;
       },
       createAnimationFromImages: async (input, signal) => {
         assertWebMcpActive(signal);
         const blobs = input.imageDataUrls.map(imageDataUrlToBlob);
-        const target = await resolveImageTarget(blobs, input);
+        const fidelityMode = input.fidelityMode ?? "strict-99";
+        const separateLayers = input.separateLayers ?? true;
+        const target = await resolveImageTarget(blobs, {
+          ...input,
+          fidelityMode,
+          resolutionMode:
+            input.resolutionMode ??
+            (input.width && input.height ? "custom" : "auto-faithful"),
+          expectedCels: blobs.length * (separateLayers ? 2 : 1),
+        });
         const splitFits =
           target.width *
             target.height *
-            blobs.length *
+          blobs.length *
             2 <=
           MAX_PROJECT_PIXEL_CELLS;
+        const animationOptions = applyFidelityProfile({
+          ...target,
+          maxColors: input.maxColors ?? 256,
+          alphaThreshold: input.alphaThreshold ?? 16,
+          trimTransparent: true,
+          targetOccupancy: input.targetOccupancy ?? 0.98,
+          fps: input.fps ?? 8,
+          loopMode: input.loopMode ?? "loop",
+          separateLayers: (input.separateLayers ?? true) && splitFits,
+          sourceNames: input.sourceNames,
+        }, fidelityMode);
         const next = await createAnimationProjectFromRasters(
           blobs,
           input.name || "Agent animation",
-          {
-            ...target,
-            maxColors: input.maxColors ?? 48,
-            dither: "none",
-            fit: "contain",
-            sampling: "smooth",
-            alphaThreshold: input.alphaThreshold ?? 16,
-            preserveAlpha: false,
-            hardAlpha: true,
-            trimTransparent: true,
-            targetOccupancy: input.targetOccupancy ?? 0.92,
-            fps: input.fps ?? 8,
-            loopMode: input.loopMode ?? "loop",
-            separateLayers: (input.separateLayers ?? true) && splitFits,
-            sourceNames: input.sourceNames,
-          },
+          animationOptions,
           signal,
         );
         assertWebMcpActive(signal);
+        const frameFidelity: Array<{
+          frameIndex: number;
+          status: string;
+          achievedScore: number | null;
+          verified: boolean;
+        }> = [];
+        if (fidelityMode === "strict-99") {
+          for (let index = 0; index < blobs.length; index += 1) {
+            assertWebMcpActive(signal);
+            const report = await auditRasterFidelity(
+              blobs[index],
+              compositeFrameRgba(next, next.frames[index]?.id),
+              next.width,
+              next.height,
+              animationOptions,
+              signal,
+            );
+            frameFidelity.push({
+              frameIndex: index,
+              status: report.status,
+              achievedScore: report.achievedScore,
+              verified: report.verified,
+            });
+          }
+        }
         editor.replaceProject(next, false);
         editor.setZoom(recommendedZoom(next.width, next.height));
         return {
@@ -899,10 +932,30 @@ export function PixelForgeStudio() {
           layerSeparation: next.animation?.layerSeparation ?? "none",
           fps: next.animation?.fps ?? null,
           pivot: next.animation?.pivot ?? null,
+          fidelityMode,
+          fidelity: {
+            targetScore: 0.99,
+            dynamicAspectRatio: true,
+            auditedFrameCount: frameFidelity.length,
+            verifiedFrameCount: frameFidelity.filter((item) => item.verified).length,
+            verified: frameFidelity.length > 0 && frameFidelity.every((item) => item.verified),
+            minimumScore: frameFidelity.length
+              ? Math.min(...frameFidelity.map((item) => item.achievedScore ?? 0))
+              : null,
+            frames: frameFidelity,
+          },
         } as ToolOutput;
       },
       getReferenceState: () =>
-        JSON.parse(JSON.stringify(reference.getSnapshot())) as ToolOutput,
+        ({
+          ...(JSON.parse(JSON.stringify(reference.getSnapshot())) as Record<string, ToolOutput>),
+          fidelityPolicy: {
+            defaultMode: "strict-99",
+            targetScore: 0.99,
+            dynamicAspectRatio: true,
+            requireAuditBeforeClaimingVerified: true,
+          },
+        }) as ToolOutput,
       openReferencePicker: () => {
         setReferenceMode("split");
         const input = referenceFileInputRef.current;
@@ -1006,19 +1059,23 @@ export function PixelForgeStudio() {
             "No browser-local reference image is available. Upload or set one first.",
           );
         }
-        const latest = projectRef.current;
-        const width = input.width ?? latest.width;
-        const height = input.height ?? latest.height;
-        const next = await pixelizeRaster(
+        const fidelityMode = input.fidelityMode ?? "strict-99";
+        const target = await resolveImageTarget([blob], {
+          ...input,
+          fidelityMode,
+          resolutionMode:
+            input.resolutionMode ??
+            (input.width && input.height ? "custom" : "auto-faithful"),
+        });
+        const converted = await pixelizeRasterDetailed(
           blob,
           input.name ||
             (reference.getState().fileName ?? "Reference image").replace(
               /\.[^.]+$/,
               "",
             ),
-          {
-            width,
-            height,
+          applyFidelityProfile({
+            ...target,
             maxColors: input.maxColors,
             dither: input.dither,
             fit: input.fit,
@@ -1026,12 +1083,13 @@ export function PixelForgeStudio() {
             alphaThreshold: input.alphaThreshold,
             preserveAlpha: input.preserveAlpha,
             trimTransparent: input.trimTransparent ?? true,
-            targetOccupancy: input.targetOccupancy ?? 0.92,
-            hardAlpha: input.hardAlpha ?? true,
-          },
+            targetOccupancy: input.targetOccupancy ?? 0.98,
+            hardAlpha: input.hardAlpha ?? false,
+          }, fidelityMode),
           signal,
         );
         assertWebMcpActive(signal);
+        const next = converted.project;
         const referenceState = reference.getState();
         next.referenceImage = {
           ...referenceState,
@@ -1047,9 +1105,48 @@ export function PixelForgeStudio() {
           height: next.height,
           paletteSize: next.palettes[0]?.colors.length ?? 0,
           source: "reference-image",
+          fidelityMode,
+          fidelity: JSON.parse(JSON.stringify(converted.fidelity)) as ToolOutput,
           reference: JSON.parse(
             JSON.stringify(reference.getSnapshot()),
           ) as ToolOutput,
+        } as ToolOutput;
+      },
+      auditReferenceFidelity: async (input = {}, signal) => {
+        assertWebMcpActive(signal);
+        const blob = reference.getBlob();
+        if (!blob) {
+          return reject(
+            "No browser-local reference image is available. Upload or set one first.",
+          );
+        }
+        const latest = projectRef.current;
+        const fidelity = await auditRasterFidelity(
+          blob,
+          compositeFrameRgba(latest),
+          latest.width,
+          latest.height,
+          applyFidelityProfile(
+            {
+              width: latest.width,
+              height: latest.height,
+              alphaThreshold: input.alphaThreshold,
+              trimTransparent: input.trimTransparent ?? true,
+              targetOccupancy: 0.98,
+            },
+            "strict-99",
+          ),
+          signal,
+        );
+        assertWebMcpActive(signal);
+        return {
+          ok: fidelity.verified,
+          message: fidelity.verified
+            ? "Current frame passed the measured 0.99 fidelity gate"
+            : "Current frame did not pass the measured 0.99 fidelity gate",
+          projectId: latest.id,
+          frameId: latest.activeFrameId,
+          fidelity: JSON.parse(JSON.stringify(fidelity)) as ToolOutput,
         } as ToolOutput;
       },
       importProject: (value) => {

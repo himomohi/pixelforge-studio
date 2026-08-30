@@ -28,7 +28,7 @@ function paletteFromFrames(projects: PixelProject[], limit: number): string[] {
   }
   return [...frequency.entries()]
     .sort((left, right) => right[1] - left[1])
-    .slice(0, Math.max(2, Math.min(64, limit)))
+    .slice(0, Math.max(2, Math.min(256, limit)))
     .map(([color]) => color);
 }
 

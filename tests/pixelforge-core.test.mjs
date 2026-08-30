@@ -109,6 +109,75 @@ test("adaptive pixelization preserves bounds, palette, alpha, and dither modes",
   }
 });
 
+test("strict fidelity derives a dynamic transparent-content ratio and enforces safe defaults", async () => {
+  const { applyFidelityProfile, resolveFaithfulTarget } = await vite.ssrLoadModule(
+    "/lib/pixelforge/pixelize.ts",
+  );
+  const target = resolveFaithfulTarget(
+    [
+      {
+        width: 1024,
+        height: 1024,
+        contentBounds: { x: 320, y: 80, width: 300, height: 900 },
+        foregroundSource: "reference-alpha",
+        hasMeaningfulAlpha: true,
+      },
+    ],
+    { resolutionMode: "auto-faithful", fidelityMode: "strict-99" },
+  );
+  assert.deepEqual([target.width, target.height], [300, 900]);
+  assert.equal(target.basedOnContentBounds, true);
+  assert.equal(target.sourceAspectRatio, 1 / 3);
+
+  const strict = applyFidelityProfile(
+    {
+      width: 64,
+      height: 64,
+      maxColors: 8,
+      fit: "stretch",
+      sampling: "nearest",
+      dither: "floyd-steinberg",
+      preserveAlpha: false,
+      hardAlpha: true,
+      targetOccupancy: 0.5,
+    },
+    "strict-99",
+  );
+  assert.equal(strict.maxColors, 128);
+  assert.equal(strict.fit, "contain");
+  assert.equal(strict.sampling, "smooth");
+  assert.equal(strict.dither, "none");
+  assert.equal(strict.preserveAlpha, true);
+  assert.equal(strict.hardAlpha, false);
+  assert.equal(strict.targetOccupancy, 0.98);
+});
+
+test("fidelity metric verifies identical masked pixels and refuses opaque-mask claims", async () => {
+  const { measurePixelFidelity } = await vite.ssrLoadModule(
+    "/lib/pixelforge/pixelize.ts",
+  );
+  const rgba = new Uint8ClampedArray([
+    0, 0, 0, 0,
+    255, 64, 32, 255,
+    32, 64, 255, 255,
+    0, 0, 0, 0,
+  ]);
+  const verified = measurePixelFidelity(rgba, rgba, 2, 2, {
+    foregroundSource: "reference-alpha",
+    sourceAspectRatio: 1,
+    destinationAspectRatio: 1,
+  });
+  assert.equal(verified.status, "verified_99");
+  assert.equal(verified.verified, true);
+  assert.equal(verified.achievedScore, 1);
+
+  const opaque = measurePixelFidelity(rgba, rgba, 2, 2, {
+    foregroundSource: "full-canvas",
+  });
+  assert.equal(opaque.status, "unscorable");
+  assert.equal(opaque.verified, false);
+});
+
 test("reference image state stays bounded and excludes remote sources", async () => {
   const {
     DEFAULT_REFERENCE_IMAGE_STATE,
@@ -230,8 +299,8 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
   try {
     const cleanup = await registerPixelForgeTools(api);
     assert.equal(typeof cleanup, "function");
-    assert.equal(registrations.length, 64);
-    assert.equal(new Set(registrations.map(({ tool }) => tool.name)).size, 64);
+    assert.equal(registrations.length, 65);
+    assert.equal(new Set(registrations.map(({ tool }) => tool.name)).size, 65);
     for (const name of [
       "list_projects",
       "select_project",
@@ -246,6 +315,7 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
       "reference_image.set_mode",
       "reference_image.set_overlay_rect",
       "reference_image.pixelize",
+      "reference_image.audit_fidelity",
     ]) {
       assert.ok(registrations.some(({ tool }) => tool.name === name));
     }
@@ -273,6 +343,12 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
       ({ tool }) => tool.name === "image_to_pixel",
     ).tool;
     assert.equal(imageTool.inputSchema.properties.width.maximum, 4096);
+    assert.equal(imageTool.inputSchema.properties.maxColors.maximum, 256);
+    assert.deepEqual(imageTool.inputSchema.properties.fidelityMode.enum, [
+      "strict-99",
+      "balanced",
+      "manual",
+    ]);
     await assert.rejects(
       () =>
         imageTool.execute(

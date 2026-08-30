@@ -26,6 +26,7 @@ export interface EditorAutomationApi {
       width?: number;
       height?: number;
       resolutionMode?: "source-exact" | "auto-faithful" | "custom";
+      fidelityMode?: "strict-99" | "balanced" | "manual";
       maxColors?: number;
       dither?: "none" | "ordered-4x4" | "floyd-steinberg";
       fit?: "contain" | "cover" | "stretch";
@@ -46,6 +47,7 @@ export interface EditorAutomationApi {
       width?: number;
       height?: number;
       resolutionMode?: "source-exact" | "auto-faithful" | "custom";
+      fidelityMode?: "strict-99" | "balanced" | "manual";
       maxColors?: number;
       alphaThreshold?: number;
       targetOccupancy?: number;
@@ -81,6 +83,8 @@ export interface EditorAutomationApi {
       name?: string;
       width?: number;
       height?: number;
+      resolutionMode?: "source-exact" | "auto-faithful" | "custom";
+      fidelityMode?: "strict-99" | "balanced" | "manual";
       maxColors?: number;
       dither?: "none" | "ordered-4x4" | "floyd-steinberg";
       fit?: "contain" | "cover" | "stretch";
@@ -91,6 +95,10 @@ export interface EditorAutomationApi {
       targetOccupancy?: number;
       hardAlpha?: boolean;
     },
+    signal?: AbortSignal,
+  ): ToolOutput | Promise<ToolOutput>;
+  auditReferenceFidelity(
+    input?: { alphaThreshold?: number; trimTransparent?: boolean },
     signal?: AbortSignal,
   ): ToolOutput | Promise<ToolOutput>;
   importProject(project: unknown): ToolOutput;
@@ -377,7 +385,7 @@ export async function registerPixelForgeTools(
     definition(
       "image_to_pixel",
       "Reconstruct image as pixel art",
-      "Create a new editable project from a bounded image. Supports source-exact or dynamic target resolution, transparent-margin trimming, subject occupancy, hard alpha, palette quantization, and grid sampling.",
+      "Create a new editable project from a bounded image. strict-99 is the default: it dynamically preserves the source or transparent-subject ratio, forbids crop/stretch, uses a detail-preserving palette, and returns a measured fidelity report. Use manual only when the user explicitly requests a stylized or lower-fidelity result.",
       {
         type: "object",
         additionalProperties: false,
@@ -395,9 +403,14 @@ export async function registerPixelForgeTools(
             enum: ["source-exact", "auto-faithful", "custom"],
             description: "Defaults to auto-faithful. Custom requires width and height.",
           },
+          fidelityMode: {
+            type: "string",
+            enum: ["strict-99", "balanced", "manual"],
+            description: "Defaults to strict-99. Manual is an explicit opt-out from the fidelity guardrails.",
+          },
           width: integer(1, 4096, "Editable output width for custom mode."),
           height: integer(1, 4096, "Editable output height for custom mode."),
-          maxColors: integer(2, 64, "Adaptive palette size."),
+          maxColors: integer(2, 256, "Adaptive palette size; strict-99 enforces at least 128."),
           dither: {
             type: "string",
             enum: ["none", "ordered-4x4", "floyd-steinberg"],
@@ -425,6 +438,11 @@ export async function registerPixelForgeTools(
               | "source-exact"
               | "auto-faithful"
               | "custom"
+              | undefined,
+            fidelityMode: input.fidelityMode as
+              | "strict-99"
+              | "balanced"
+              | "manual"
               | undefined,
             maxColors:
               input.maxColors === undefined ? undefined : Number(input.maxColors),
@@ -467,7 +485,7 @@ export async function registerPixelForgeTools(
     definition(
       "animation_from_images",
       "Create animation from images",
-      "Align two or more source images into animation frames, separate pixels shared by every frame from motion details when memory allows, and add the result as a new project.",
+      "Align two or more source images into animation frames with strict-99 proportion and sampling guardrails by default, separate pixels shared by every frame from motion details when memory allows, and add the result as a new project.",
       {
         type: "object",
         additionalProperties: false,
@@ -493,9 +511,13 @@ export async function registerPixelForgeTools(
             type: "string",
             enum: ["source-exact", "auto-faithful", "custom"],
           },
+          fidelityMode: {
+            type: "string",
+            enum: ["strict-99", "balanced", "manual"],
+          },
           width: integer(1, 4096),
           height: integer(1, 4096),
-          maxColors: integer(2, 64),
+          maxColors: integer(2, 256),
           alphaThreshold: integer(0, 255),
           targetOccupancy: number(0.1, 1),
           fps: integer(1, 60),
@@ -519,6 +541,11 @@ export async function registerPixelForgeTools(
               | "source-exact"
               | "auto-faithful"
               | "custom"
+              | undefined,
+            fidelityMode: input.fidelityMode as
+              | "strict-99"
+              | "balanced"
+              | "manual"
               | undefined,
             width:
               input.width === undefined ? undefined : Number(input.width),
@@ -770,15 +797,25 @@ export async function registerPixelForgeTools(
     definition(
       "reference_image.pixelize",
       "Convert current reference to pixel art",
-      "Reuse the current browser-local reference as image-to-pixel input and add the result as a new editable project.",
+      "Reuse the current browser-local reference as image-to-pixel input. strict-99 is the default and dynamically derives a canvas from transparent content bounds, preserves aspect ratio without cropping or stretching, and returns an auditable measured score.",
       {
         type: "object",
         additionalProperties: false,
         properties: {
           name: { type: "string", maxLength: 120 },
-          width: integer(1, 4096, "Defaults to the current project width."),
-          height: integer(1, 4096, "Defaults to the current project height."),
-          maxColors: integer(2, 64, "Adaptive palette size."),
+          resolutionMode: {
+            type: "string",
+            enum: ["source-exact", "auto-faithful", "custom"],
+            description: "Defaults to auto-faithful. Supplying width and height implies custom mode.",
+          },
+          fidelityMode: {
+            type: "string",
+            enum: ["strict-99", "balanced", "manual"],
+            description: "Defaults to strict-99. Manual is an explicit opt-out from guardrails.",
+          },
+          width: integer(1, 4096, "Editable output width for custom mode."),
+          height: integer(1, 4096, "Editable output height for custom mode."),
+          maxColors: integer(2, 256, "Adaptive palette size; strict-99 enforces at least 128."),
           dither: {
             type: "string",
             enum: ["none", "ordered-4x4", "floyd-steinberg"],
@@ -801,6 +838,16 @@ export async function registerPixelForgeTools(
               input.width === undefined ? undefined : Number(input.width),
             height:
               input.height === undefined ? undefined : Number(input.height),
+            resolutionMode: input.resolutionMode as
+              | "source-exact"
+              | "auto-faithful"
+              | "custom"
+              | undefined,
+            fidelityMode: input.fidelityMode as
+              | "strict-99"
+              | "balanced"
+              | "manual"
+              | undefined,
             maxColors:
               input.maxColors === undefined
                 ? undefined
@@ -840,6 +887,39 @@ export async function registerPixelForgeTools(
         return output;
       },
       {},
+    ),
+    definition(
+      "reference_image.audit_fidelity",
+      "Audit current frame against reference",
+      "Measure the active frame against the browser-local reference after every reference-driven WebMCP workflow. A verified_99 result requires a score of at least 0.990, every metric floor, exact dimensions, and a meaningful reference alpha mask; never describe an unscorable or degraded result as 99% verified.",
+      {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          alphaThreshold: integer(0, 255, "Alpha cutoff used for the silhouette comparison."),
+          trimTransparent: boolean("Compare against transparent content bounds."),
+        },
+      },
+      async (input, context) => {
+        assertActive(context?.signal);
+        const output = await api.auditReferenceFidelity(
+          {
+            alphaThreshold:
+              input.alphaThreshold === undefined
+                ? undefined
+                : Number(input.alphaThreshold),
+            trimTransparent:
+              input.trimTransparent === undefined
+                ? undefined
+                : input.trimTransparent === true,
+          },
+          context?.signal,
+        );
+        assertActive(context?.signal);
+        onStatus?.("auditReferenceFidelity completed");
+        return output;
+      },
+      { readOnlyHint: true, idempotentHint: true },
     ),
     definition(
       "import_project",
