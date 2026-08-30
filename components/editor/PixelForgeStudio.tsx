@@ -82,35 +82,49 @@ import {
 } from "@/lib/pixelforge/export";
 import { importProjectJson, importRaster } from "@/lib/pixelforge/import";
 import {
+  ellipse as drawEllipse,
+  floodFill,
+  line as drawLine,
+  rectangle as drawRectangle,
+} from "@/lib/pixelforge/algorithms";
+import {
   registerPixelForgeTools,
   type EditorAutomationApi,
   type ToolOutput,
 } from "@/lib/pixelforge/webmcp";
-import type {
-  PixelPatch,
-  PixelProject,
-  ToolId,
-} from "@/lib/pixelforge/types";
+import type { Anchor, PixelPatch, PixelProject, ToolId } from "@/lib/pixelforge/types";
 
 const WEBMCP_TOOLS: WebMCPTool[] = [
   ["get_project_state", "Read project, frame, layer, and tool state"],
   ["create_project", "Create a pixel canvas"],
+  ["import_project", "Restore a complete project object"],
+  ["rename_project", "Rename the project"],
+  ["resize_canvas", "Resize and anchor every cel"],
   ["set_active_tool", "Choose a drawing tool"],
   ["set_primary_color", "Set the drawing color"],
+  ["set_secondary_color", "Set the background color"],
+  ["set_brush_size", "Set the brush diameter"],
+  ["load_palette", "Replace the active palette"],
   ["draw_pixels", "Write an atomic pixel batch"],
+  ["apply_edit", "Draw a shape or flood fill"],
   ["clear_active_cel", "Clear the current cel"],
+  ["set_selection", "Set or clear the marquee"],
+  ["delete_selection", "Clear selected pixels"],
   ["add_frame", "Add an animation frame"],
   ["duplicate_frame", "Duplicate the active frame"],
   ["delete_frame", "Delete the active frame"],
   ["set_active_frame", "Select a frame"],
   ["set_frame_duration", "Change frame timing"],
+  ["reorder_frame", "Move a frame in the timeline"],
   ["add_layer", "Add a layer"],
   ["duplicate_layer", "Duplicate the active layer"],
   ["delete_layer", "Delete the active layer"],
   ["rename_layer", "Rename the active layer"],
   ["toggle_layer_visibility", "Show or hide a layer"],
+  ["lock_layer", "Lock or unlock a layer"],
   ["set_layer_opacity", "Change layer opacity"],
   ["set_active_layer", "Select a layer"],
+  ["reorder_layer", "Move a layer in the stack"],
   ["undo", "Undo the latest edit"],
   ["redo", "Redo the latest edit"],
   ["set_zoom", "Change canvas zoom"],
@@ -142,9 +156,11 @@ export function PixelForgeStudio() {
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
   const [webMcpOpen, setWebMcpOpen] = React.useState(false);
   const [mobilePanelOpen, setMobilePanelOpen] = React.useState(false);
+  const [mobileTab, setMobileTab] = React.useState("layers");
   const [cursor, setCursor] = React.useState<CanvasPoint | null>(null);
   const [webMcpAvailable, setWebMcpAvailable] = React.useState(false);
   const [webMcpStatus, setWebMcpStatus] = React.useState("Not detected");
+  const [webMcpRefreshKey, setWebMcpRefreshKey] = React.useState(0);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const previousToolRef = React.useRef<ToolId | null>(null);
 
@@ -259,13 +275,13 @@ export function PixelForgeStudio() {
     const deleteSelection = () => {
       const selection = editor.projectRef.current.selection;
       if (!selection) return;
-      const patches: PixelPatch[] = [];
-      for (let y = selection.y; y < selection.y + selection.height; y += 1) {
-        for (let x = selection.x; x < selection.x + selection.width; x += 1) {
-          patches.push({ x, y, color: "" });
-        }
-      }
-      editor.commitPixels(patches);
+      const latest = editor.projectRef.current;
+      editor.dispatch({
+        type: "pixels/clear-rect",
+        layerId: latest.activeLayerId,
+        frameId: latest.activeFrameId,
+        selection,
+      });
       editor.dispatch({ type: "selection/set", selection: null }, false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -352,11 +368,57 @@ export function PixelForgeStudio() {
 
   React.useEffect(() => {
     if (!editor.hydrated) return;
+    let disposed = false;
+    let unregister: (() => void) | null = null;
+    let retryTimer: number | undefined;
     const projectRef = editor.projectRef;
     const summary = (message: string) => result(message, projectRef.current);
+    const reject = (message: string): ToolOutput => ({ ok: false, message });
+    const activeLayerFor = (latest = projectRef.current) =>
+      latest.layers.find((layer) => layer.id === latest.activeLayerId);
+    const assertExportActive = (signal?: AbortSignal) => {
+      if (signal?.aborted) {
+        throw new DOMException("The WebMCP export was cancelled.", "AbortError");
+      }
+    };
     const api: EditorAutomationApi = {
-      getProjectState: () =>
-        JSON.parse(JSON.stringify(projectRef.current)) as ToolOutput,
+      getProjectState: ({ includePixels = false } = {}) => {
+        const latest = projectRef.current;
+        if (includePixels) {
+          return JSON.parse(JSON.stringify(latest)) as ToolOutput;
+        }
+        return {
+          id: latest.id,
+          name: latest.name,
+          width: latest.width,
+          height: latest.height,
+          activeLayerId: latest.activeLayerId,
+          activeFrameId: latest.activeFrameId,
+          tool: JSON.parse(JSON.stringify(latest.tool)) as ToolOutput,
+          onionSkin: JSON.parse(JSON.stringify(latest.onionSkin)) as ToolOutput,
+          symmetry: JSON.parse(JSON.stringify(latest.symmetry)) as ToolOutput,
+          selection: latest.selection
+            ? JSON.parse(JSON.stringify(latest.selection)) as ToolOutput
+            : null,
+          frames: latest.frames.map((frame) => ({
+            id: frame.id,
+            index: frame.index,
+            duration: frame.duration,
+          })),
+          layers: latest.layers.map((layer) => ({
+            id: layer.id,
+            name: layer.name,
+            visible: layer.visible,
+            locked: layer.locked,
+            opacity: layer.opacity,
+          })),
+          palettes: latest.palettes.map((palette) => ({
+            id: palette.id,
+            name: palette.name,
+            colors: [...palette.colors],
+          })),
+        } as ToolOutput;
+      },
       createProject: (input) => {
         const next = editor.newProject({
           name: input.name || "Agent sprite",
@@ -365,6 +427,24 @@ export function PixelForgeStudio() {
           transparent: true,
         });
         return result("Project created", next);
+      },
+      importProject: (value) => {
+        const next = importProjectJson(value);
+        editor.replaceProject(next);
+        return result("Project imported", next);
+      },
+      renameProject: (name) => {
+        editor.dispatch({ type: "project/rename", name });
+        return summary("Project renamed");
+      },
+      resizeCanvas: (input) => {
+        editor.dispatch({
+          type: "canvas/resize",
+          width: input.width,
+          height: input.height,
+          anchor: input.anchor as Anchor | undefined,
+        });
+        return summary("Canvas resized");
       },
       setActiveTool: (tool) => {
         const supported = [
@@ -388,7 +468,29 @@ export function PixelForgeStudio() {
         editor.setPrimaryColor(color);
         return summary("Primary color set");
       },
+      setSecondaryColor: (color) => {
+        editor.setSecondaryColor(color);
+        return summary("Secondary color set");
+      },
+      setBrushSize: (size) => {
+        editor.setBrushSize(size);
+        return summary("Brush size set");
+      },
+      loadPalette: ({ name = "Agent palette", colors }) => {
+        const next = JSON.parse(JSON.stringify(projectRef.current)) as PixelProject;
+        next.palettes = [
+          {
+            id: "palette-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+            name,
+            colors: [...colors],
+          },
+        ];
+        if (colors[0]) next.tool.color = colors[0];
+        editor.replaceProject(next);
+        return result("Palette loaded", next);
+      },
       drawPixels: (input) => {
+        if (activeLayerFor()?.locked) return reject("The active layer is locked");
         const fallback = projectRef.current.tool.color;
         editor.commitPixels(
           input.pixels.map((pixel) => ({
@@ -399,14 +501,114 @@ export function PixelForgeStudio() {
         );
         return summary("Pixels drawn");
       },
+      applyEdit: (input) => {
+        const latest = projectRef.current;
+        if (activeLayerFor(latest)?.locked) {
+          return reject("The active layer is locked");
+        }
+        const active = celFor(
+          latest,
+          latest.activeLayerId,
+          latest.activeFrameId,
+        );
+        if (!active) return reject("The active cel is unavailable");
+        if (
+          input.start.x < 0 ||
+          input.start.y < 0 ||
+          input.start.x >= latest.width ||
+          input.start.y >= latest.height
+        ) {
+          return reject("The start point is outside the canvas");
+        }
+        if (input.operation !== "fill" && !input.end) {
+          return reject("This operation requires an end point");
+        }
+
+        const before = active.pixels;
+        const after = [...before];
+        const color = input.color || latest.tool.color;
+        if (input.operation === "fill") {
+          floodFill(after, latest.width, input.start.x, input.start.y, color);
+        } else if (input.operation === "line") {
+          drawLine(after, latest.width, input.start, input.end!, color);
+        } else if (input.operation === "rectangle") {
+          drawRectangle(
+            after,
+            latest.width,
+            input.start,
+            input.end!,
+            color,
+            input.filled === true,
+          );
+        } else {
+          drawEllipse(
+            after,
+            latest.width,
+            input.start,
+            input.end!,
+            color,
+            input.filled === true,
+          );
+        }
+        const patches: PixelPatch[] = [];
+        for (let index = 0; index < after.length; index += 1) {
+          if (after[index] === before[index]) continue;
+          patches.push({
+            x: index % latest.width,
+            y: Math.floor(index / latest.width),
+            color: after[index],
+          });
+        }
+        editor.commitPixels(patches);
+        return summary(
+          patches.length ? `${input.operation} applied` : "No pixels changed",
+        );
+      },
       clearActiveCel: () => {
         const latest = projectRef.current;
+        if (activeLayerFor(latest)?.locked) {
+          return reject("The active layer is locked");
+        }
         editor.dispatch({
           type: "cel/clear",
           layerId: latest.activeLayerId,
           frameId: latest.activeFrameId,
         });
         return summary("Cel cleared");
+      },
+      setSelection: (selection) => {
+        const latest = projectRef.current;
+        const normalized = selection
+          ? {
+              x: Math.max(0, Math.min(latest.width - 1, selection.x)),
+              y: Math.max(0, Math.min(latest.height - 1, selection.y)),
+              width: Math.max(
+                1,
+                Math.min(selection.width, latest.width - selection.x),
+              ),
+              height: Math.max(
+                1,
+                Math.min(selection.height, latest.height - selection.y),
+              ),
+            }
+          : null;
+        editor.dispatch({ type: "selection/set", selection: normalized }, false);
+        return summary(normalized ? "Selection set" : "Selection cleared");
+      },
+      deleteSelection: () => {
+        const latest = projectRef.current;
+        if (!latest.selection) return reject("There is no active selection");
+        if (activeLayerFor(latest)?.locked) {
+          return reject("The active layer is locked");
+        }
+        editor.dispatch({
+          type: "pixels/clear-rect",
+          layerId: latest.activeLayerId,
+          frameId: latest.activeFrameId,
+          selection: latest.selection,
+        });
+        editor.dispatch({ type: "selection/set", selection: null }, false);
+        return summary("Selected pixels cleared");
       },
       addFrame: () => {
         editor.dispatch({ type: "frame/add", duration: 130 });
@@ -439,6 +641,14 @@ export function PixelForgeStudio() {
           duration: ms,
         });
         return summary("Frame duration set");
+      },
+      reorderFrame: (to) => {
+        editor.dispatch({
+          type: "frame/reorder",
+          id: projectRef.current.activeFrameId,
+          to,
+        });
+        return summary("Frame reordered");
       },
       addLayer: (name) => {
         editor.dispatch({ type: "layer/add", name });
@@ -473,6 +683,14 @@ export function PixelForgeStudio() {
         });
         return summary("Layer visibility toggled");
       },
+      lockLayer: (locked) => {
+        editor.dispatch({
+          type: "layer/lock",
+          id: projectRef.current.activeLayerId,
+          locked,
+        });
+        return summary("Layer lock updated");
+      },
       setLayerOpacity: (opacity) => {
         editor.dispatch({
           type: "layer/opacity",
@@ -487,6 +705,14 @@ export function PixelForgeStudio() {
         editor.dispatch({ type: "active/set", layerId: layer.id }, false);
         return summary("Layer selected");
       },
+      reorderLayer: (to) => {
+        editor.dispatch({
+          type: "layer/reorder",
+          id: projectRef.current.activeLayerId,
+          to,
+        });
+        return summary("Layer reordered");
+      },
       undo: () => {
         editor.undo();
         return summary("Undo completed");
@@ -496,7 +722,7 @@ export function PixelForgeStudio() {
         return summary("Redo completed");
       },
       setZoom: (value) => {
-        editor.setZoom(value > 32 ? Math.round(value / 100) : value);
+        editor.setZoom(value);
         return summary("Zoom set");
       },
       toggleGrid: (enabled) => {
@@ -536,26 +762,131 @@ export function PixelForgeStudio() {
         }
         return summary("Playback " + action);
       },
-      exportAsset: async (format, options) => {
-        const scale = Number(options?.scale ?? 1);
-        if (format === "png") await downloadCurrentPng(scale);
-        if (format === "gif") downloadGif(scale, options?.loop !== false);
-        if (format === "spritesheet") {
-          await downloadSheet(scale, Number(options?.columns || 0) || undefined);
+      exportAsset: async (format, options, signal): Promise<ToolOutput> => {
+        assertExportActive(signal);
+        const latest = projectRef.current;
+        const scale = Math.max(1, Math.floor(Number(options?.scale ?? 1)));
+        const base = sanitizeFilename(latest.name);
+        if (format === "png") {
+          const blob = await exportFramePng(latest, latest.activeFrameId, scale);
+          assertExportActive(signal);
+          const filename = base + "-frame.png";
+          downloadBlob(blob, filename);
+          return {
+            ok: true,
+            message: "PNG export completed",
+            filename,
+            mime: blob.type || "image/png",
+            size: blob.size,
+          };
         }
-        if (format === "project") downloadProject();
-        return summary(format + " export started");
+        if (format === "gif") {
+          const blob = exportAnimatedGif(latest, {
+            scale,
+            loop: options?.loop === false ? 1 : 0,
+          });
+          assertExportActive(signal);
+          const filename = base + ".gif";
+          downloadBlob(blob, filename);
+          return {
+            ok: true,
+            message: "GIF export completed",
+            filename,
+            mime: blob.type || "image/gif",
+            size: blob.size,
+          };
+        }
+        if (format === "spritesheet") {
+          const output = await exportSpriteSheet(latest, {
+            layout:
+              options?.layout === "horizontal" ||
+              options?.layout === "vertical" ||
+              options?.layout === "grid"
+                ? options.layout
+                : "grid",
+            columns: Number(options?.columns || 0) || undefined,
+            gap: Number(options?.gap || 0),
+            scale,
+          });
+          assertExportActive(signal);
+          const pngFilename = base + "-sheet.png";
+          const jsonFilename = base + "-sheet.json";
+          downloadBlob(output.png, pngFilename);
+          window.setTimeout(() => {
+            if (!signal?.aborted) downloadBlob(output.json, jsonFilename);
+          }, 120);
+          return {
+            ok: true,
+            message: "Sprite sheet export completed",
+            pngFilename,
+            jsonFilename,
+            pngSize: output.png.size,
+            jsonSize: output.json.size,
+            frameCount: output.metadata.frames.length,
+          };
+        }
+        const blob = exportProjectJson(latest);
+        assertExportActive(signal);
+        const filename = base + ".pxforge";
+        downloadBlob(blob, filename);
+        return {
+          ok: true,
+          message: "Project export completed",
+          filename,
+          mime: blob.type,
+          size: blob.size,
+        };
       },
     };
-    const cleanup = registerPixelForgeTools(api, (message) => {
-      setWebMcpStatus(message);
-    });
-    setWebMcpAvailable(Boolean(cleanup));
-    setWebMcpStatus(cleanup ? "Tools registered" : "Waiting for a compatible host");
-    return cleanup ?? undefined;
-    // Register once after local project restoration. Methods use projectRef for live state.
+    const attemptRegistration = async (remainingAttempts: number) => {
+      try {
+        const cleanup = await registerPixelForgeTools(api, (message) => {
+          if (!disposed) setWebMcpStatus(message);
+        });
+        if (disposed) {
+          cleanup?.();
+          return;
+        }
+        if (cleanup) {
+          unregister = cleanup;
+          setWebMcpAvailable(true);
+          setWebMcpStatus("Tools registered");
+          return;
+        }
+        setWebMcpAvailable(false);
+        if (remainingAttempts > 0) {
+          setWebMcpStatus("Waiting for a compatible WebMCP host");
+          retryTimer = window.setTimeout(
+            () => void attemptRegistration(remainingAttempts - 1),
+            1500,
+          );
+        } else {
+          setWebMcpStatus("No compatible WebMCP host detected");
+        }
+      } catch (error) {
+        if (disposed) return;
+        setWebMcpAvailable(false);
+        setWebMcpStatus(
+          error instanceof Error ? error.message : "WebMCP registration failed",
+        );
+        if (remainingAttempts > 0) {
+          retryTimer = window.setTimeout(
+            () => void attemptRegistration(remainingAttempts - 1),
+            1500,
+          );
+        }
+      }
+    };
+
+    void attemptRegistration(20);
+    return () => {
+      disposed = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      unregister?.();
+    };
+    // Register after local restoration and on an explicit status refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor.hydrated]);
+  }, [editor.hydrated, webMcpRefreshKey]);
 
   const statusText = activeLayer?.locked
     ? "Layer locked"
@@ -824,13 +1155,19 @@ export function PixelForgeStudio() {
         <nav className="safe-bottom studio-panel flex h-[58px] shrink-0 items-center justify-around border-x-0 border-b-0 xl:hidden">
           <MobileNavButton
             label="Layers"
-            onClick={() => setMobilePanelOpen(true)}
+            onClick={() => {
+              setMobileTab("layers");
+              setMobilePanelOpen(true);
+            }}
           >
             <Layers3 />
           </MobileNavButton>
           <MobileNavButton
             label="Palette"
-            onClick={() => setMobilePanelOpen(true)}
+            onClick={() => {
+              setMobileTab("palette");
+              setMobilePanelOpen(true);
+            }}
           >
             <Palette />
           </MobileNavButton>
@@ -887,12 +1224,11 @@ export function PixelForgeStudio() {
           open={webMcpOpen}
           onOpenChange={setWebMcpOpen}
           available={webMcpAvailable}
+          status={webMcpStatus}
           tools={WEBMCP_TOOLS}
           onRefresh={() => {
-            setWebMcpStatus(
-              webMcpAvailable ? "Tools registered" : "No compatible host detected",
-            );
-            toast.info(webMcpStatus);
+            setWebMcpRefreshKey((key) => key + 1);
+            toast.info("Checking for a compatible WebMCP host…");
           }}
         />
 
@@ -907,7 +1243,11 @@ export function PixelForgeStudio() {
                 Layers, palette, navigator, and drawing options
               </SheetDescription>
             </SheetHeader>
-            <Tabs defaultValue="layers" className="min-h-0 flex-1 gap-0">
+            <Tabs
+              value={mobileTab}
+              onValueChange={setMobileTab}
+              className="min-h-0 flex-1 gap-0"
+            >
               <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4 bg-[#0c1018]">
                 <TabsTrigger value="layers">Layers</TabsTrigger>
                 <TabsTrigger value="palette">Colors</TabsTrigger>

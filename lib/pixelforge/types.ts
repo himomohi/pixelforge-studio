@@ -125,6 +125,7 @@ export type ProjectAction =
   | { type: "frame/reorder"; id: string; to: number }
   | { type: "frame/duration"; id: string; duration: number }
   | { type: "pixels/patch"; layerId: string; frameId: string; patches: PixelPatch[] }
+  | { type: "pixels/clear-rect"; layerId: string; frameId: string; selection: Exclude<Selection, null> }
   | { type: "cel/clear"; layerId: string; frameId: string }
   | { type: "canvas/resize"; width: number; height: number; anchor?: Anchor }
   | { type: "selection/set"; selection: Selection }

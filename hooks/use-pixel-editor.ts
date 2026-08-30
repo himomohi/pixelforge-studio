@@ -49,54 +49,68 @@ export function usePixelEditor() {
   const repository = React.useMemo(() => createProjectRepository(), []);
   const project = history.present;
   const projectRef = React.useRef(project);
+  const historyRef = React.useRef(history);
   React.useEffect(() => {
     projectRef.current = project;
-  }, [project]);
+    historyRef.current = history;
+  }, [history, project]);
 
   const dispatch = React.useCallback((action: ProjectAction, record = true) => {
-    setHistory((current) => {
-      const next = projectReducer(current.present, action);
-      if (next === current.present) return current;
-      if (!record) return { ...current, present: next };
-      return {
-        past: [...current.past.slice(-79), current.present],
-        present: next,
-        future: [],
-      };
-    });
+    const current = historyRef.current;
+    const nextProject = projectReducer(current.present, action);
+    if (nextProject === current.present) return;
+    const nextHistory = record
+      ? {
+          past: [...current.past.slice(-79), current.present],
+          present: nextProject,
+          future: [],
+        }
+      : { ...current, present: nextProject };
+    historyRef.current = nextHistory;
+    projectRef.current = nextProject;
+    setHistory(nextHistory);
   }, []);
 
   const replaceProject = React.useCallback((next: PixelProject, record = true) => {
-    setHistory((current) => ({
+    const copy = projectCopy(next);
+    const current = historyRef.current;
+    const nextHistory = {
       past: record ? [...current.past.slice(-79), current.present] : [],
-      present: projectCopy(next),
+      present: copy,
       future: [],
-    }));
+    };
+    historyRef.current = nextHistory;
+    projectRef.current = copy;
+    setHistory(nextHistory);
     setActiveProjectKey(next.id);
   }, []);
 
   const undo = React.useCallback(() => {
-    setHistory((current) => {
-      const previous = current.past.at(-1);
-      if (!previous) return current;
-      return {
-        past: current.past.slice(0, -1),
-        present: previous,
-        future: [current.present, ...current.future.slice(0, 79)],
-      };
-    });
+    const current = historyRef.current;
+    const previous = current.past.at(-1);
+    if (!previous) return;
+    const nextHistory = {
+      past: current.past.slice(0, -1),
+      present: previous,
+      future: [current.present, ...current.future.slice(0, 79)],
+    };
+    historyRef.current = nextHistory;
+    projectRef.current = previous;
+    setHistory(nextHistory);
   }, []);
 
   const redo = React.useCallback(() => {
-    setHistory((current) => {
-      const next = current.future[0];
-      if (!next) return current;
-      return {
-        past: [...current.past.slice(-79), current.present],
-        present: next,
-        future: current.future.slice(1),
-      };
-    });
+    const current = historyRef.current;
+    const next = current.future[0];
+    if (!next) return;
+    const nextHistory = {
+      past: [...current.past.slice(-79), current.present],
+      present: next,
+      future: current.future.slice(1),
+    };
+    historyRef.current = nextHistory;
+    projectRef.current = next;
+    setHistory(nextHistory);
   }, []);
 
   const newProject = React.useCallback(
@@ -154,7 +168,9 @@ export function usePixelEditor() {
       if (key) {
         const saved = await repository.load(key);
         if (!cancelled && saved?.project) {
-          setHistory({ past: [], present: saved.project, future: [] });
+          historyRef.current = { past: [], present: saved.project, future: [] };
+          projectRef.current = saved.project;
+          setHistory(historyRef.current);
         }
       }
       if (!cancelled) setHydrated(true);

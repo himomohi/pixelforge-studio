@@ -187,6 +187,8 @@ export function PixelCanvas({
   const previewRef = React.useRef<Map<number, string>>(new Map());
   const [previewVersion, setPreviewVersion] = React.useState(0);
   const [draftSelection, setDraftSelection] = React.useState<SelectionRect | null>(null);
+  const [keyboardCursor, setKeyboardCursor] = React.useState<CanvasPoint>({ x: 0, y: 0 });
+  const [keyboardFocused, setKeyboardFocused] = React.useState(false);
 
   const pointFromEvent = React.useCallback(
     (event: React.PointerEvent<HTMLCanvasElement>): CanvasPoint => {
@@ -298,7 +300,7 @@ export function PixelCanvas({
     const gesture = gestureRef.current;
     if (!gesture) return;
     if (tool === "select") {
-      const nextSelection = draftSelection ?? rectFromPoints(gesture.start, gesture.last);
+      const nextSelection = rectFromPoints(gesture.start, gesture.last);
       onSelectionChange?.(nextSelection);
       setDraftSelection(null);
     } else if (previewRef.current.size > 0) {
@@ -312,7 +314,47 @@ export function PixelCanvas({
     previewRef.current.clear();
     gestureRef.current = null;
     setPreviewVersion((value) => value + 1);
-  }, [draftSelection, onCommit, onSelectionChange, tool, width]);
+  }, [onCommit, onSelectionChange, tool, width]);
+
+  const handleCanvasKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
+    const movement: Record<string, CanvasPoint> = {
+      ArrowLeft: { x: -1, y: 0 },
+      ArrowRight: { x: 1, y: 0 },
+      ArrowUp: { x: 0, y: -1 },
+      ArrowDown: { x: 0, y: 1 },
+    };
+    const delta = movement[event.key];
+    if (delta) {
+      event.preventDefault();
+      setKeyboardCursor((current) => ({
+        x: Math.max(0, Math.min(width - 1, current.x + delta.x)),
+        y: Math.max(0, Math.min(height - 1, current.y + delta.y)),
+      }));
+      return;
+    }
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (disabled) return;
+    if (tool === "picker") {
+      const picked = pixels[keyboardCursor.y * width + keyboardCursor.x];
+      if (picked) onPickColor(picked);
+      return;
+    }
+    if (tool === "fill") {
+      const patches = fillAt(keyboardCursor, primaryColor);
+      if (patches.length) onCommit(patches, "Keyboard flood fill");
+      return;
+    }
+    if (tool === "pencil" || tool === "eraser") {
+      onCommit(
+        expandBrush([keyboardCursor]).map((point) => ({
+          ...point,
+          color: tool === "eraser" ? "" : primaryColor,
+        })),
+        "Keyboard pixel edit",
+      );
+    }
+  };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (disabled || (event.button !== 0 && event.button !== 2)) return;
@@ -394,23 +436,35 @@ export function PixelCanvas({
   return (
     <div
       ref={scrollerRef}
-      className="pixel-scrollbar relative flex h-full min-h-0 w-full items-center justify-center overflow-auto bg-[#07090e] p-8 sm:p-12"
+      className="pixel-scrollbar relative h-full min-h-0 w-full overflow-auto bg-[#07090e]"
       aria-label="Pixel canvas workspace"
     >
-      <div
-        className="pixel-checker relative shrink-0 shadow-[0_18px_64px_rgba(0,0,0,.55),0_0_0_1px_#30384a]"
-        style={{ width: canvasWidth, height: canvasHeight }}
-      >
+      <p id="pixel-canvas-help" className="sr-only">
+        Use arrow keys to move the keyboard cursor. Press Enter or Space to draw
+        with the pencil, eraser, fill, or eyedropper tool.
+      </p>
+      <div className="flex min-h-full min-w-full items-center justify-center p-8 sm:p-12">
+        <div
+          className="pixel-checker relative shrink-0 shadow-[0_18px_64px_rgba(0,0,0,.55),0_0_0_1px_#30384a]"
+          style={{ width: canvasWidth, height: canvasHeight }}
+        >
         <canvas
           ref={canvasRef}
           className="pixel-canvas absolute inset-0 h-full w-full"
           style={{ cursor: tool === "hand" ? "grab" : tool === "picker" ? "copy" : "crosshair" }}
           aria-label={`${width} by ${height} pixel drawing canvas`}
+          aria-describedby="pixel-canvas-help"
+          role="application"
+          tabIndex={0}
           onContextMenu={(event) => event.preventDefault()}
+          onFocus={() => setKeyboardFocused(true)}
+          onBlur={() => setKeyboardFocused(false)}
+          onKeyDown={handleCanvasKeyDown}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={finishGesture}
           onPointerCancel={finishGesture}
+          onLostPointerCapture={finishGesture}
           onPointerLeave={() => onCursorChange?.(null)}
         />
         {showGrid && zoom >= 8 ? (
@@ -437,6 +491,18 @@ export function PixelCanvas({
             }}
           />
         ) : null}
+        {keyboardFocused ? (
+          <div
+            className="pointer-events-none absolute border-2 border-[#b8f34a] shadow-[0_0_0_1px_#0b0d12]"
+            style={{
+              left: keyboardCursor.x * zoom,
+              top: keyboardCursor.y * zoom,
+              width: zoom,
+              height: zoom,
+            }}
+          />
+        ) : null}
+        </div>
       </div>
     </div>
   );
