@@ -74,6 +74,36 @@ export interface Symmetry {
   centerY: number;
 }
 
+export type ReferenceImageMode = "split" | "overlay" | "hidden";
+
+export interface ReferenceOverlayRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ReferenceImageState {
+  version: 1;
+  assetId: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  width: number | null;
+  height: number | null;
+  updatedAt: number | null;
+  mode: ReferenceImageMode;
+  zoom: number;
+  fit: boolean;
+  opacity: number;
+  flipX: boolean;
+  flipY: boolean;
+  panelSize: number;
+  collapsed: boolean;
+  overlayRect: ReferenceOverlayRect;
+  overlayPinned: boolean;
+}
+
 export type Selection = {
   x: number;
   y: number;
@@ -97,6 +127,7 @@ export interface PixelProject {
   onionSkin: OnionSkin;
   symmetry: Symmetry;
   selection: Selection;
+  referenceImage?: ReferenceImageState;
 }
 
 /** Compatibility name used by persistence, import, and export modules. */
@@ -132,4 +163,5 @@ export type ProjectAction =
   | { type: "tool/set"; settings: Partial<ToolSettings> }
   | { type: "onion/set"; settings: Partial<OnionSkin> }
   | { type: "symmetry/set"; settings: Partial<Symmetry> }
+  | { type: "reference/set"; state: ReferenceImageState }
   | { type: "active/set"; layerId?: string; frameId?: string };

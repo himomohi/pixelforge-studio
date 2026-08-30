@@ -10,6 +10,7 @@ import {
   FilePlus2,
   FolderOpen,
   Grid3X3,
+  Image as ImageIcon,
   Keyboard,
   Layers3,
   Menu,
@@ -50,6 +51,10 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { PixelCanvas, type CanvasPoint } from "./PixelCanvas";
 import {
+  MobileReferenceViewer,
+  ReferenceWorkspace,
+} from "./ReferenceImageView";
+import {
   ExportDialog,
   ImagePixelDialog,
   NewProjectDialog,
@@ -68,6 +73,7 @@ import {
   ToolDock,
 } from "./StudioParts";
 import { usePixelEditor } from "@/hooks/use-pixel-editor";
+import { useReferenceImage } from "@/hooks/use-reference-image";
 import { celFor } from "@/lib/pixelforge/project";
 import {
   adjacentFrameId,
@@ -90,6 +96,13 @@ import {
   type PixelizeOptions,
 } from "@/lib/pixelforge/pixelize";
 import {
+  assertReferenceMode,
+  assertReferenceOpacity,
+  assertReferenceOverlayRect,
+  assertReferencePanelSize,
+  assertReferenceZoom,
+} from "@/lib/pixelforge/reference-image";
+import {
   getProjectPreset,
   projectPresets,
   recommendedZoom,
@@ -105,7 +118,13 @@ import {
   type EditorAutomationApi,
   type ToolOutput,
 } from "@/lib/pixelforge/webmcp";
-import type { Anchor, PixelPatch, PixelProject, ToolId } from "@/lib/pixelforge/types";
+import type {
+  Anchor,
+  PixelPatch,
+  PixelProject,
+  ReferenceImageMode,
+  ToolId,
+} from "@/lib/pixelforge/types";
 
 const WEBMCP_TOOLS: WebMCPTool[] = [
   ["get_project_state", "Read project, frame, layer, and tool state"],
@@ -113,6 +132,20 @@ const WEBMCP_TOOLS: WebMCPTool[] = [
   ["create_from_preset", "Create a project from a production preset"],
   ["create_project", "Create a pixel canvas"],
   ["image_to_pixel", "Convert a base64 image into editable pixel art"],
+  ["reference_image.get_state", "Read reference image metadata and view state"],
+  ["reference_image.open_picker", "Request the local reference image picker"],
+  ["reference_image.set_from_data_url", "Set a bounded browser-local reference image"],
+  ["reference_image.clear", "Remove the current reference image"],
+  ["reference_image.set_mode", "Switch split, overlay, or hidden mode"],
+  ["reference_image.set_zoom", "Set reference image zoom"],
+  ["reference_image.set_opacity", "Set reference image opacity"],
+  ["reference_image.set_flip", "Mirror the reference image"],
+  ["reference_image.set_panel_size", "Resize the desktop split panel"],
+  ["reference_image.set_overlay_rect", "Move and resize the floating window"],
+  ["reference_image.fit", "Fit the reference inside its viewport"],
+  ["reference_image.set_pinned", "Pin the floating reference window"],
+  ["reference_image.set_collapsed", "Collapse the desktop reference panel"],
+  ["reference_image.pixelize", "Convert the current reference into editable pixels"],
   ["import_project", "Restore a complete project object"],
   ["rename_project", "Rename the project"],
   ["resize_canvas", "Resize and anchor every cel"],
@@ -167,22 +200,43 @@ function result(message: string, project?: PixelProject): ToolOutput {
 export function PixelForgeStudio() {
   const editor = usePixelEditor();
   const { project } = editor;
+  const referenceDispatch = editor.dispatch;
+  const applyReferenceState = React.useCallback(
+    (state: NonNullable<PixelProject["referenceImage"]>) => {
+      referenceDispatch({ type: "reference/set", state }, false);
+    },
+    [referenceDispatch],
+  );
+  const reference = useReferenceImage(
+    project.referenceImage,
+    applyReferenceState,
+  );
+  const getReferenceState = reference.getState;
+  const updateReference = reference.update;
   const [newOpen, setNewOpen] = React.useState(false);
   const [exportOpen, setExportOpen] = React.useState(false);
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
   const [webMcpOpen, setWebMcpOpen] = React.useState(false);
   const [mobilePanelOpen, setMobilePanelOpen] = React.useState(false);
+  const [mobileReferenceOpen, setMobileReferenceOpen] = React.useState(false);
+  const [mobileReferenceFullscreen, setMobileReferenceFullscreen] =
+    React.useState(false);
   const [mobileTab, setMobileTab] = React.useState("layers");
   const [cursor, setCursor] = React.useState<CanvasPoint | null>(null);
   const [webMcpAvailable, setWebMcpAvailable] = React.useState(false);
   const [webMcpStatus, setWebMcpStatus] = React.useState("Not detected");
   const [webMcpRefreshKey, setWebMcpRefreshKey] = React.useState(0);
   const [pixelSource, setPixelSource] = React.useState<
-    (ImagePixelSource & { file: File; key: string }) | null
+    (ImagePixelSource & {
+      file: File;
+      key: string;
+      fromReference?: boolean;
+    }) | null
   >(null);
   const [pixelizeOpen, setPixelizeOpen] = React.useState(false);
   const [pixelizing, setPixelizing] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const referenceFileInputRef = React.useRef<HTMLInputElement>(null);
   const previousToolRef = React.useRef<ToolId | null>(null);
 
   const activeLayer = project.layers.find(
@@ -303,6 +357,62 @@ export function PixelForgeStudio() {
     }
   };
 
+  const handleReferenceUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      await reference.setFromBlob(file, file.name);
+      if (window.matchMedia("(max-width: 767px)").matches) {
+        setMobileReferenceOpen(true);
+      }
+      toast.success("Reference image ready");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Reference image failed",
+      );
+    }
+  };
+
+  const setReferenceMode = React.useCallback(
+    (mode: ReferenceImageMode) => {
+      updateReference({
+        mode,
+        collapsed:
+          mode === "hidden" ? getReferenceState().collapsed : false,
+      });
+      if (window.matchMedia("(max-width: 767px)").matches) {
+        setMobileReferenceOpen(mode !== "hidden");
+      }
+    },
+    [getReferenceState, updateReference],
+  );
+
+  const clearReference = React.useCallback(() => {
+    reference.clear();
+    toast.success("Reference image removed");
+  }, [reference]);
+
+  const prepareReferencePixelize = React.useCallback(() => {
+    const file = reference.getFile();
+    const snapshot = reference.getSnapshot();
+    if (!file || !snapshot.width || !snapshot.height) {
+      toast.error("Upload a local reference image first");
+      return;
+    }
+    setPixelSource({
+      file,
+      name: (snapshot.fileName ?? "Reference image").replace(/\.[^.]+$/, ""),
+      width: snapshot.width,
+      height: snapshot.height,
+      key: `${snapshot.assetId}-${snapshot.updatedAt}`,
+      fromReference: true,
+    });
+    setPixelizeOpen(true);
+  }, [reference]);
+
   const handlePixelize = async (options: PixelizeOptions) => {
     if (!pixelSource) return;
     setPixelizing(true);
@@ -312,6 +422,13 @@ export function PixelForgeStudio() {
         pixelSource.name,
         options,
       );
+      if (pixelSource.fromReference) {
+        const referenceState = reference.getState();
+        next.referenceImage = {
+          ...referenceState,
+          overlayRect: { ...referenceState.overlayRect },
+        };
+      }
       editor.replaceProject(next);
       editor.setZoom(recommendedZoom(next.width, next.height));
       setPixelizeOpen(false);
@@ -430,6 +547,14 @@ export function PixelForgeStudio() {
     const projectRef = editor.projectRef;
     const summary = (message: string) => result(message, projectRef.current);
     const reject = (message: string): ToolOutput => ({ ok: false, message });
+    const referenceSummary = (message: string): ToolOutput =>
+      ({
+        ok: true,
+        message,
+        state: JSON.parse(
+          JSON.stringify(reference.getSnapshot()),
+        ) as ToolOutput,
+      }) as ToolOutput;
     const activeLayerFor = (latest = projectRef.current) =>
       latest.layers.find((layer) => layer.id === latest.activeLayerId);
     const assertWebMcpActive = (signal?: AbortSignal) => {
@@ -536,6 +661,11 @@ export function PixelForgeStudio() {
           signal,
         );
         assertWebMcpActive(signal);
+        const referenceState = reference.getState();
+        next.referenceImage = {
+          ...referenceState,
+          overlayRect: { ...referenceState.overlayRect },
+        };
         editor.replaceProject(next);
         editor.setZoom(recommendedZoom(next.width, next.height));
         return {
@@ -546,6 +676,154 @@ export function PixelForgeStudio() {
           height: next.height,
           paletteSize: next.palettes[0]?.colors.length ?? 0,
           source: "data-url",
+        } as ToolOutput;
+      },
+      getReferenceState: () =>
+        JSON.parse(JSON.stringify(reference.getSnapshot())) as ToolOutput,
+      openReferencePicker: () => {
+        setReferenceMode("split");
+        const input = referenceFileInputRef.current;
+        input?.click();
+        return {
+          ok: true,
+          message: input
+            ? "Reference picker requested; browser user-activation rules may still require the visible Upload button."
+            : "Reference picker is not mounted yet.",
+          pickerRequested: Boolean(input),
+          state: JSON.parse(
+            JSON.stringify(reference.getSnapshot()),
+          ) as ToolOutput,
+        } as ToolOutput;
+      },
+      setReferenceFromDataUrl: async (input, signal) => {
+        assertWebMcpActive(signal);
+        await reference.setFromDataUrl(
+          input.imageDataUrl,
+          input.name || "Reference image",
+          signal,
+        );
+        assertWebMcpActive(signal);
+        if (window.matchMedia("(max-width: 767px)").matches) {
+          setMobileReferenceOpen(true);
+        }
+        return referenceSummary("Reference image set from local data");
+      },
+      clearReferenceImage: () => {
+        reference.clear();
+        return referenceSummary("Reference image cleared");
+      },
+      setReferenceMode: (mode) => {
+        assertReferenceMode(mode);
+        setReferenceMode(mode);
+        return referenceSummary("Reference display mode changed");
+      },
+      setReferenceZoom: (zoom) => {
+        assertReferenceZoom(zoom);
+        reference.update({ zoom, fit: false });
+        return referenceSummary("Reference zoom changed");
+      },
+      setReferenceOpacity: (opacity) => {
+        assertReferenceOpacity(opacity);
+        reference.update({ opacity });
+        return referenceSummary("Reference opacity changed");
+      },
+      setReferenceFlip: (input) => {
+        if (input.flipX === undefined && input.flipY === undefined) {
+          throw new Error("Set flipX, flipY, or both.");
+        }
+        if (
+          (input.flipX !== undefined && typeof input.flipX !== "boolean") ||
+          (input.flipY !== undefined && typeof input.flipY !== "boolean")
+        ) {
+          throw new Error("Reference flip values must be booleans.");
+        }
+        reference.update({
+          flipX: input.flipX ?? reference.getState().flipX,
+          flipY: input.flipY ?? reference.getState().flipY,
+        });
+        return referenceSummary("Reference flips changed");
+      },
+      setReferencePanelSize: (panelSize) => {
+        assertReferencePanelSize(panelSize);
+        reference.update({ panelSize, collapsed: false });
+        return referenceSummary("Reference panel width changed");
+      },
+      setReferenceOverlayRect: (rect) => {
+        assertReferenceOverlayRect(rect);
+        reference.update({ overlayRect: rect });
+        return referenceSummary("Floating reference bounds changed");
+      },
+      fitReferenceImage: () => {
+        reference.update({ fit: true });
+        return referenceSummary("Reference fitted to its viewport");
+      },
+      setReferencePinned: (pinned) => {
+        if (typeof pinned !== "boolean") {
+          throw new Error("Pinned must be a boolean.");
+        }
+        reference.update({ overlayPinned: pinned });
+        return referenceSummary(
+          pinned ? "Floating reference pinned" : "Floating reference unpinned",
+        );
+      },
+      setReferenceCollapsed: (collapsed) => {
+        if (typeof collapsed !== "boolean") {
+          throw new Error("Collapsed must be a boolean.");
+        }
+        reference.update({ collapsed });
+        return referenceSummary(
+          collapsed ? "Reference panel collapsed" : "Reference panel expanded",
+        );
+      },
+      pixelizeReference: async (input, signal) => {
+        assertWebMcpActive(signal);
+        const blob = reference.getBlob();
+        if (!blob) {
+          return reject(
+            "No browser-local reference image is available. Upload or set one first.",
+          );
+        }
+        const latest = projectRef.current;
+        const width = input.width ?? latest.width;
+        const height = input.height ?? latest.height;
+        const next = await pixelizeRaster(
+          blob,
+          input.name ||
+            (reference.getState().fileName ?? "Reference image").replace(
+              /\.[^.]+$/,
+              "",
+            ),
+          {
+            width,
+            height,
+            maxColors: input.maxColors,
+            dither: input.dither,
+            fit: input.fit,
+            sampling: input.sampling,
+            alphaThreshold: input.alphaThreshold,
+            preserveAlpha: input.preserveAlpha,
+          },
+          signal,
+        );
+        assertWebMcpActive(signal);
+        const referenceState = reference.getState();
+        next.referenceImage = {
+          ...referenceState,
+          overlayRect: { ...referenceState.overlayRect },
+        };
+        editor.replaceProject(next);
+        editor.setZoom(recommendedZoom(next.width, next.height));
+        return {
+          ok: true,
+          message: "Reference converted into an editable pixel project",
+          projectId: next.id,
+          width: next.width,
+          height: next.height,
+          paletteSize: next.palettes[0]?.colors.length ?? 0,
+          source: "reference-image",
+          reference: JSON.parse(
+            JSON.stringify(reference.getSnapshot()),
+          ) as ToolOutput,
         } as ToolOutput;
       },
       importProject: (value) => {
@@ -1074,6 +1352,25 @@ export function PixelForgeStudio() {
             >
               <Redo2 />
             </ToolbarButton>
+            <ToolbarButton
+              label="Reference image"
+              aria-pressed={reference.state.mode !== "hidden"}
+              onClick={() => {
+                if (window.matchMedia("(max-width: 767px)").matches) {
+                  setMobileReferenceOpen(true);
+                  return;
+                }
+                if (reference.state.mode === "hidden") {
+                  setReferenceMode("split");
+                } else if (reference.state.mode === "split") {
+                  reference.update({ collapsed: !reference.state.collapsed });
+                } else {
+                  setReferenceMode("hidden");
+                }
+              }}
+            >
+              <ImageIcon />
+            </ToolbarButton>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -1127,6 +1424,19 @@ export function PixelForgeStudio() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem
+                  onSelect={() => {
+                    if (window.matchMedia("(max-width: 767px)").matches) {
+                      setMobileReferenceOpen(true);
+                    } else if (reference.state.mode === "hidden") {
+                      setReferenceMode("split");
+                    } else {
+                      reference.update({ collapsed: false });
+                    }
+                  }}
+                >
+                  <ImageIcon /> Reference image
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setMobilePanelOpen(true)}>
                   <Settings2 /> Panels
                 </DropdownMenuItem>
@@ -1199,33 +1509,41 @@ export function PixelForgeStudio() {
             </div>
 
             <div className="min-h-0 flex-1">
-              <PixelCanvas
-                width={project.width}
-                height={project.height}
-                pixels={currentPixels}
-                previousPixels={previousPixels}
-                nextPixels={nextPixels}
-                zoom={editor.zoom}
-                showGrid={editor.showGrid}
-                onionSkin={project.onionSkin.enabled}
-                tool={project.tool.tool}
-                primaryColor={project.tool.color}
-                secondaryColor={editor.secondaryColor}
-                brushSize={project.tool.size}
-                symmetryX={project.symmetry.enabled && project.symmetry.x}
-                symmetryY={project.symmetry.enabled && project.symmetry.y}
-                selection={project.selection}
-                disabled={activeLayer?.locked || !activeCel}
-                onCommit={(patches) => editor.commitPixels(patches)}
-                onPickColor={editor.setPrimaryColor}
-                onSelectionChange={(selection) =>
-                  editor.dispatch(
-                    { type: "selection/set", selection },
-                    false,
-                  )
-                }
-                onCursorChange={setCursor}
-              />
+              <ReferenceWorkspace
+                reference={reference}
+                onRequestUpload={() => referenceFileInputRef.current?.click()}
+                onClear={clearReference}
+                onPixelize={prepareReferencePixelize}
+                onModeChange={setReferenceMode}
+              >
+                <PixelCanvas
+                  width={project.width}
+                  height={project.height}
+                  pixels={currentPixels}
+                  previousPixels={previousPixels}
+                  nextPixels={nextPixels}
+                  zoom={editor.zoom}
+                  showGrid={editor.showGrid}
+                  onionSkin={project.onionSkin.enabled}
+                  tool={project.tool.tool}
+                  primaryColor={project.tool.color}
+                  secondaryColor={editor.secondaryColor}
+                  brushSize={project.tool.size}
+                  symmetryX={project.symmetry.enabled && project.symmetry.x}
+                  symmetryY={project.symmetry.enabled && project.symmetry.y}
+                  selection={project.selection}
+                  disabled={activeLayer?.locked || !activeCel}
+                  onCommit={(patches) => editor.commitPixels(patches)}
+                  onPickColor={editor.setPrimaryColor}
+                  onSelectionChange={(selection) =>
+                    editor.dispatch(
+                      { type: "selection/set", selection },
+                      false,
+                    )
+                  }
+                  onCursorChange={setCursor}
+                />
+              </ReferenceWorkspace>
             </div>
             <div className="flex h-7 shrink-0 items-center border-t border-[#252e3f] bg-[#0d1118] px-2 font-mono text-[9px] text-[#788398] sm:px-3">
               <span className="min-w-20">
@@ -1292,6 +1610,13 @@ export function PixelForgeStudio() {
             <Palette />
           </MobileNavButton>
           <MobileNavButton
+            label="Reference"
+            active={mobileReferenceOpen}
+            onClick={() => setMobileReferenceOpen(true)}
+          >
+            <ImageIcon />
+          </MobileNavButton>
+          <MobileNavButton
             label="Grid"
             active={editor.showGrid}
             onClick={() => editor.setShowGrid(!editor.showGrid)}
@@ -1322,6 +1647,14 @@ export function PixelForgeStudio() {
           accept=".pxforge,.json,image/png,image/jpeg,image/webp"
           className="hidden"
           onChange={(event) => void handleImport(event)}
+        />
+        <input
+          ref={referenceFileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          aria-label="Upload reference image"
+          onChange={(event) => void handleReferenceUpload(event)}
         />
 
         <NewProjectDialog
@@ -1425,6 +1758,17 @@ export function PixelForgeStudio() {
             </Tabs>
           </SheetContent>
         </Sheet>
+        <MobileReferenceViewer
+          open={mobileReferenceOpen}
+          onOpenChange={setMobileReferenceOpen}
+          fullscreen={mobileReferenceFullscreen}
+          onFullscreenChange={setMobileReferenceFullscreen}
+          reference={reference}
+          onRequestUpload={() => referenceFileInputRef.current?.click()}
+          onClear={clearReference}
+          onPixelize={prepareReferencePixelize}
+          onModeChange={setReferenceMode}
+        />
         <Toaster position="top-center" richColors />
       </main>
     </TooltipProvider>

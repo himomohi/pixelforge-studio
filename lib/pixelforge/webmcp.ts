@@ -30,6 +30,41 @@ export interface EditorAutomationApi {
     },
     signal?: AbortSignal,
   ): ToolOutput | Promise<ToolOutput>;
+  getReferenceState(): ToolOutput;
+  openReferencePicker(): ToolOutput;
+  setReferenceFromDataUrl(
+    input: { imageDataUrl: string; name?: string },
+    signal?: AbortSignal,
+  ): ToolOutput | Promise<ToolOutput>;
+  clearReferenceImage(): ToolOutput;
+  setReferenceMode(mode: "split" | "overlay" | "hidden"): ToolOutput;
+  setReferenceZoom(zoom: number): ToolOutput;
+  setReferenceOpacity(opacity: number): ToolOutput;
+  setReferenceFlip(input: { flipX?: boolean; flipY?: boolean }): ToolOutput;
+  setReferencePanelSize(panelSize: number): ToolOutput;
+  setReferenceOverlayRect(input: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): ToolOutput;
+  fitReferenceImage(): ToolOutput;
+  setReferencePinned(pinned: boolean): ToolOutput;
+  setReferenceCollapsed(collapsed: boolean): ToolOutput;
+  pixelizeReference(
+    input: {
+      name?: string;
+      width?: number;
+      height?: number;
+      maxColors?: number;
+      dither?: "none" | "ordered-4x4" | "floyd-steinberg";
+      fit?: "contain" | "cover" | "stretch";
+      sampling?: "smooth" | "nearest";
+      alphaThreshold?: number;
+      preserveAlpha?: boolean;
+    },
+    signal?: AbortSignal,
+  ): ToolOutput | Promise<ToolOutput>;
   importProject(project: unknown): ToolOutput;
   renameProject(name: string): ToolOutput;
   resizeCanvas(input: { width: number; height: number; anchor?: string }): ToolOutput;
@@ -317,6 +352,280 @@ export async function registerPixelForgeTools(
         );
         assertActive(context?.signal);
         onStatus?.("pixelizeImage completed");
+        return output;
+      },
+      { destructiveHint: true },
+    ),
+    definition(
+      "reference_image.get_state",
+      "Get reference image state",
+      "Read the browser-local reference image metadata and every synchronized view setting without returning the image bytes.",
+      noArgs,
+      (_input, context) => call("getReferenceState", [], context),
+      { readOnlyHint: true, idempotentHint: true },
+    ),
+    definition(
+      "reference_image.open_picker",
+      "Open reference image picker",
+      "Request the browser file picker for a local PNG, JPEG, or WebP. Browser user-activation rules may require the user to click the visible upload control instead.",
+      noArgs,
+      (_input, context) => call("openReferencePicker", [], context),
+    ),
+    definition(
+      "reference_image.set_from_data_url",
+      "Set reference from data URL",
+      "Validate and store a bounded PNG, JPEG, or WebP data URL as the current browser-local reference image. Remote URLs are never accepted.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["imageDataUrl"],
+        properties: {
+          imageDataUrl: {
+            type: "string",
+            pattern: "^data:image/(png|jpeg|webp);base64,",
+            maxLength: 22400000,
+            description: "Base64 image data URL; arbitrary remote URLs are not accepted.",
+          },
+          name: { type: "string", maxLength: 180 },
+        },
+      },
+      async (input, context) => {
+        assertActive(context?.signal);
+        const output = await api.setReferenceFromDataUrl(
+          {
+            imageDataUrl: String(input.imageDataUrl),
+            name: typeof input.name === "string" ? input.name : undefined,
+          },
+          context?.signal,
+        );
+        assertActive(context?.signal);
+        onStatus?.("setReferenceFromDataUrl completed");
+        return output;
+      },
+    ),
+    definition(
+      "reference_image.clear",
+      "Clear reference image",
+      "Remove the current browser-local reference image while preserving the pixel project.",
+      noArgs,
+      (_input, context) => call("clearReferenceImage", [], context),
+      { destructiveHint: true },
+    ),
+    definition(
+      "reference_image.set_mode",
+      "Set reference display mode",
+      "Switch the desktop reference between split, floating overlay, and hidden modes. Mobile continues to use its dedicated sheet viewer.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["mode"],
+        properties: {
+          mode: {
+            type: "string",
+            enum: ["split", "overlay", "hidden"],
+          },
+        },
+      },
+      (input, context) => call("setReferenceMode", [input.mode], context),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.set_zoom",
+      "Set reference zoom",
+      "Set the reference image scale from 0.1 to 8, where 1 is 100 percent.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["zoom"],
+        properties: {
+          zoom: number(0.1, 8, "Scale multiplier; 1 is 100 percent."),
+        },
+      },
+      (input, context) =>
+        call("setReferenceZoom", [Number(input.zoom)], context),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.set_opacity",
+      "Set reference opacity",
+      "Set reference image opacity from 0 to 1.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["opacity"],
+        properties: {
+          opacity: number(0, 1, "Opacity from transparent 0 to opaque 1."),
+        },
+      },
+      (input, context) =>
+        call("setReferenceOpacity", [Number(input.opacity)], context),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.set_flip",
+      "Set reference flips",
+      "Set horizontal and/or vertical reference mirroring. At least one field is required.",
+      {
+        type: "object",
+        additionalProperties: false,
+        minProperties: 1,
+        properties: {
+          flipX: boolean("Mirror left to right."),
+          flipY: boolean("Mirror top to bottom."),
+        },
+      },
+      (input, context) =>
+        call(
+          "setReferenceFlip",
+          [
+            {
+              flipX:
+                input.flipX === undefined ? undefined : input.flipX === true,
+              flipY:
+                input.flipY === undefined ? undefined : input.flipY === true,
+            },
+          ],
+          context,
+        ),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.set_panel_size",
+      "Set reference panel width",
+      "Set the desktop split reference panel width in pixels.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["panelSize"],
+        properties: {
+          panelSize: integer(220, 720, "Desktop panel width in pixels."),
+        },
+      },
+      (input, context) =>
+        call("setReferencePanelSize", [Number(input.panelSize)], context),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.set_overlay_rect",
+      "Set floating reference bounds",
+      "Move and resize the floating reference using workspace-relative pixel bounds.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["x", "y", "width", "height"],
+        properties: {
+          x: integer(0, 4096),
+          y: integer(0, 4096),
+          width: integer(260, 1600),
+          height: integer(220, 1200),
+        },
+      },
+      (input, context) =>
+        call(
+          "setReferenceOverlayRect",
+          [
+            {
+              x: Number(input.x),
+              y: Number(input.y),
+              width: Number(input.width),
+              height: Number(input.height),
+            },
+          ],
+          context,
+        ),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.fit",
+      "Fit reference image",
+      "Fit the entire reference image inside its current panel or floating window.",
+      noArgs,
+      (_input, context) => call("fitReferenceImage", [], context),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.set_pinned",
+      "Pin floating reference",
+      "Pin or unpin the floating reference so its position and size cannot be changed by pointer input.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["pinned"],
+        properties: { pinned: boolean() },
+      },
+      (input, context) =>
+        call("setReferencePinned", [input.pinned === true], context),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.set_collapsed",
+      "Collapse reference panel",
+      "Collapse or expand the desktop split reference panel without clearing its image.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["collapsed"],
+        properties: { collapsed: boolean() },
+      },
+      (input, context) =>
+        call("setReferenceCollapsed", [input.collapsed === true], context),
+      { idempotentHint: true },
+    ),
+    definition(
+      "reference_image.pixelize",
+      "Convert current reference to pixel art",
+      "Reuse the current browser-local reference as image-to-pixel input and replace the canvas with an editable pixel project.",
+      {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string", maxLength: 120 },
+          width: integer(1, 1024, "Defaults to the current project width."),
+          height: integer(1, 1024, "Defaults to the current project height."),
+          maxColors: integer(2, 64, "Adaptive palette size."),
+          dither: {
+            type: "string",
+            enum: ["none", "ordered-4x4", "floyd-steinberg"],
+          },
+          fit: { type: "string", enum: ["contain", "cover", "stretch"] },
+          sampling: { type: "string", enum: ["smooth", "nearest"] },
+          alphaThreshold: integer(0, 255),
+          preserveAlpha: boolean("Preserve alpha values above the cutoff."),
+        },
+      },
+      async (input, context) => {
+        assertActive(context?.signal);
+        const output = await api.pixelizeReference(
+          {
+            name: typeof input.name === "string" ? input.name : undefined,
+            width:
+              input.width === undefined ? undefined : Number(input.width),
+            height:
+              input.height === undefined ? undefined : Number(input.height),
+            maxColors:
+              input.maxColors === undefined
+                ? undefined
+                : Number(input.maxColors),
+            dither: input.dither as
+              | "none"
+              | "ordered-4x4"
+              | "floyd-steinberg"
+              | undefined,
+            fit: input.fit as "contain" | "cover" | "stretch" | undefined,
+            sampling: input.sampling as "smooth" | "nearest" | undefined,
+            alphaThreshold:
+              input.alphaThreshold === undefined
+                ? undefined
+                : Number(input.alphaThreshold),
+            preserveAlpha:
+              input.preserveAlpha === undefined
+                ? undefined
+                : input.preserveAlpha === true,
+          },
+          context?.signal,
+        );
+        assertActive(context?.signal);
+        onStatus?.("pixelizeReference completed");
         return output;
       },
       { destructiveHint: true },

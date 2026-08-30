@@ -109,6 +109,36 @@ test("adaptive pixelization preserves bounds, palette, alpha, and dither modes",
   }
 });
 
+test("reference image state stays bounded and excludes remote sources", async () => {
+  const {
+    DEFAULT_REFERENCE_IMAGE_STATE,
+    normalizeReferenceImageState,
+    validateReferenceImageState,
+  } = await vite.ssrLoadModule("/lib/pixelforge/reference-image.ts");
+  const normalized = normalizeReferenceImageState({
+    mode: "overlay",
+    zoom: 99,
+    opacity: -4,
+    panelSize: 10_000,
+    overlayRect: { x: -10, y: 99_999, width: 4, height: 9_999 },
+  });
+
+  assert.equal(normalized.mode, "overlay");
+  assert.equal(normalized.zoom, 8);
+  assert.equal(normalized.opacity, 0);
+  assert.equal(normalized.panelSize, 720);
+  assert.deepEqual(normalized.overlayRect, {
+    x: 0,
+    y: 4096,
+    width: 260,
+    height: 1200,
+  });
+  assert.equal(validateReferenceImageState(normalized), true);
+  assert.equal("url" in normalized, false);
+  assert.equal("dataUrl" in normalized, false);
+  assert.equal(validateReferenceImageState(DEFAULT_REFERENCE_IMAGE_STATE), true);
+});
+
 test("animated GIF export emits a complete GIF89a file", async () => {
   const { createProject } = await vite.ssrLoadModule(
     "/lib/pixelforge/project.ts",
@@ -176,12 +206,17 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
   try {
     const cleanup = await registerPixelForgeTools(api);
     assert.equal(typeof cleanup, "function");
-    assert.equal(registrations.length, 44);
-    assert.equal(new Set(registrations.map(({ tool }) => tool.name)).size, 44);
+    assert.equal(registrations.length, 58);
+    assert.equal(new Set(registrations.map(({ tool }) => tool.name)).size, 58);
     for (const name of [
       "list_project_presets",
       "create_from_preset",
       "image_to_pixel",
+      "reference_image.get_state",
+      "reference_image.set_from_data_url",
+      "reference_image.set_mode",
+      "reference_image.set_overlay_rect",
+      "reference_image.pixelize",
     ]) {
       assert.ok(registrations.some(({ tool }) => tool.name === name));
     }
@@ -217,6 +252,30 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
             width: 32,
             height: 32,
           },
+          { signal: cancelled.signal },
+        ),
+      (error) => error?.name === "AbortError",
+    );
+
+    const panelTool = registrations.find(
+      ({ tool }) => tool.name === "reference_image.set_panel_size",
+    ).tool;
+    assert.equal(panelTool.inputSchema.properties.panelSize.minimum, 220);
+    assert.equal(panelTool.inputSchema.properties.panelSize.maximum, 720);
+    await panelTool.execute({ panelSize: 360 });
+    assert.deepEqual(calls.at(-1), ["setReferencePanelSize", 360]);
+
+    const referenceDataTool = registrations.find(
+      ({ tool }) => tool.name === "reference_image.set_from_data_url",
+    ).tool;
+    assert.match(
+      referenceDataTool.inputSchema.properties.imageDataUrl.pattern,
+      /data:image/,
+    );
+    await assert.rejects(
+      () =>
+        referenceDataTool.execute(
+          { imageDataUrl: "data:image/png;base64,AA==" },
           { signal: cancelled.signal },
         ),
       (error) => error?.name === "AbortError",
