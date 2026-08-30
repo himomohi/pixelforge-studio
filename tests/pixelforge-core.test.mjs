@@ -65,6 +65,50 @@ test("project validation rejects incomplete and duplicate cel references", async
   assert.equal(validateProject(duplicateReference), false);
 });
 
+test("production presets cover web games, classic systems, and detailed canvases", async () => {
+  const { projectPresets, getProjectPreset, recommendedZoom, MAX_CANVAS_DIMENSION } =
+    await vite.ssrLoadModule("/lib/pixelforge/presets.ts");
+  const categories = new Set(projectPresets.map((preset) => preset.category));
+  assert.deepEqual(
+    categories,
+    new Set(["sprites", "tiles-ui", "web-games", "classic-systems"]),
+  );
+  assert.deepEqual(
+    [getProjectPreset("pico8-screen").width, getProjectPreset("pico8-screen").height],
+    [128, 128],
+  );
+  assert.deepEqual(
+    [getProjectPreset("web-detailed-640x360").width, getProjectPreset("playdate-screen").height],
+    [640, 240],
+  );
+  assert.equal(MAX_CANVAS_DIMENSION, 1024);
+  assert.equal(recommendedZoom(1024, 1024), 1);
+  assert.ok(projectPresets.length >= 20);
+});
+
+test("adaptive pixelization preserves bounds, palette, alpha, and dither modes", async () => {
+  const { pixelizeRgba } = await vite.ssrLoadModule(
+    "/lib/pixelforge/pixelize.ts",
+  );
+  const rgba = new Uint8ClampedArray([
+    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
+    255, 255, 0, 255, 255, 0, 255, 128, 0, 0, 0, 0,
+  ]);
+  for (const dither of ["none", "ordered-4x4", "floyd-steinberg"]) {
+    const converted = pixelizeRgba(rgba, 3, 2, {
+      maxColors: 4,
+      dither,
+      alphaThreshold: 8,
+      preserveAlpha: true,
+    });
+    assert.equal(converted.pixels.length, 6);
+    assert.ok(converted.palette.length >= 2 && converted.palette.length <= 4);
+    assert.equal(converted.transparentPixels, 1);
+    assert.equal(converted.pixels[5], "");
+    assert.match(converted.pixels[4], /^#[0-9a-f]{8}$/);
+  }
+});
+
 test("animated GIF export emits a complete GIF89a file", async () => {
   const { createProject } = await vite.ssrLoadModule(
     "/lib/pixelforge/project.ts",
@@ -132,8 +176,15 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
   try {
     const cleanup = await registerPixelForgeTools(api);
     assert.equal(typeof cleanup, "function");
-    assert.equal(registrations.length, 41);
-    assert.equal(new Set(registrations.map(({ tool }) => tool.name)).size, 41);
+    assert.equal(registrations.length, 44);
+    assert.equal(new Set(registrations.map(({ tool }) => tool.name)).size, 44);
+    for (const name of [
+      "list_project_presets",
+      "create_from_preset",
+      "image_to_pixel",
+    ]) {
+      assert.ok(registrations.some(({ tool }) => tool.name === name));
+    }
 
     const stateTool = registrations.find(
       ({ tool }) => tool.name === "get_project_state",
@@ -151,6 +202,23 @@ test("WebMCP registers a unique, cancellable tool for every workflow", async () 
     cancelled.abort();
     await assert.rejects(
       () => exportTool.execute({ scale: 1 }, { signal: cancelled.signal }),
+      (error) => error?.name === "AbortError",
+    );
+
+    const imageTool = registrations.find(
+      ({ tool }) => tool.name === "image_to_pixel",
+    ).tool;
+    assert.equal(imageTool.inputSchema.properties.width.maximum, 1024);
+    await assert.rejects(
+      () =>
+        imageTool.execute(
+          {
+            imageDataUrl: "data:image/png;base64,AA==",
+            width: 32,
+            height: 32,
+          },
+          { signal: cancelled.signal },
+        ),
       (error) => error?.name === "AbortError",
     );
 

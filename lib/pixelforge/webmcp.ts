@@ -12,7 +12,24 @@ export type ToolOutput = JsonValue | { [key: string]: JsonValue };
 
 export interface EditorAutomationApi {
   getProjectState(options?: { includePixels?: boolean }): ToolOutput;
+  listProjectPresets(): ToolOutput;
+  createFromPreset(input: { presetId: string; name?: string }): ToolOutput;
   createProject(input: { width: number; height: number; name?: string }): ToolOutput;
+  pixelizeImage(
+    input: {
+      imageDataUrl: string;
+      name?: string;
+      width: number;
+      height: number;
+      maxColors?: number;
+      dither?: "none" | "ordered-4x4" | "floyd-steinberg";
+      fit?: "contain" | "cover" | "stretch";
+      sampling?: "smooth" | "nearest";
+      alphaThreshold?: number;
+      preserveAlpha?: boolean;
+    },
+    signal?: AbortSignal,
+  ): ToolOutput | Promise<ToolOutput>;
   importProject(project: unknown): ToolOutput;
   renameProject(name: string): ToolOutput;
   resizeCanvas(input: { width: number; height: number; anchor?: string }): ToolOutput;
@@ -129,8 +146,8 @@ const point = {
   additionalProperties: false,
   required: ["x", "y"],
   properties: {
-    x: integer(0, 511, "Zero-based pixel x coordinate."),
-    y: integer(0, 511, "Zero-based pixel y coordinate."),
+    x: integer(0, 1023, "Zero-based pixel x coordinate."),
+    y: integer(0, 1023, "Zero-based pixel y coordinate."),
   },
 };
 
@@ -201,6 +218,30 @@ export async function registerPixelForgeTools(
       { readOnlyHint: true, idempotentHint: true },
     ),
     definition(
+      "list_project_presets",
+      "List production presets",
+      "List researched sprite, tile, web-game, and classic-system canvas presets.",
+      noArgs,
+      (_input, context) => call("listProjectPresets", [], context),
+      { readOnlyHint: true, idempotentHint: true },
+    ),
+    definition(
+      "create_from_preset",
+      "Create from preset",
+      "Replace the workspace with a production-sized preset and matching palette.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["presetId"],
+        properties: {
+          presetId: { type: "string", minLength: 1, maxLength: 80 },
+          name: { type: "string", maxLength: 120 },
+        },
+      },
+      (input, context) => call("createFromPreset", [input], context),
+      { destructiveHint: true },
+    ),
+    definition(
       "create_project",
       "Create project",
       "Replace the workspace with a new transparent pixel project.",
@@ -209,12 +250,75 @@ export async function registerPixelForgeTools(
         additionalProperties: false,
         required: ["width", "height"],
         properties: {
-          width: integer(1, 512, "Canvas width in pixels."),
-          height: integer(1, 512, "Canvas height in pixels."),
+          width: integer(1, 1024, "Canvas width in pixels."),
+          height: integer(1, 1024, "Canvas height in pixels."),
           name: { type: "string", maxLength: 120, description: "Project name." },
         },
       },
       (input, context) => call("createProject", [input], context),
+      { destructiveHint: true },
+    ),
+    definition(
+      "image_to_pixel",
+      "Convert image to pixel art",
+      "Decode a bounded PNG, JPEG, or WebP data URL, downsample it, quantize its palette, apply optional dithering, and replace the workspace with an editable pixel project.",
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["imageDataUrl", "width", "height"],
+        properties: {
+          imageDataUrl: {
+            type: "string",
+            pattern: "^data:image/(png|jpeg|webp);base64,",
+            maxLength: 22400000,
+            description: "Base64 image data URL; arbitrary remote URLs are not accepted.",
+          },
+          name: { type: "string", maxLength: 120 },
+          width: integer(1, 1024, "Editable output width."),
+          height: integer(1, 1024, "Editable output height."),
+          maxColors: integer(2, 64, "Adaptive palette size."),
+          dither: {
+            type: "string",
+            enum: ["none", "ordered-4x4", "floyd-steinberg"],
+          },
+          fit: { type: "string", enum: ["contain", "cover", "stretch"] },
+          sampling: { type: "string", enum: ["smooth", "nearest"] },
+          alphaThreshold: integer(0, 255),
+          preserveAlpha: boolean("Preserve alpha values above the cutoff."),
+        },
+      },
+      async (input, context) => {
+        assertActive(context?.signal);
+        const output = await api.pixelizeImage(
+          {
+            imageDataUrl: String(input.imageDataUrl),
+            name: typeof input.name === "string" ? input.name : undefined,
+            width: Number(input.width),
+            height: Number(input.height),
+            maxColors:
+              input.maxColors === undefined ? undefined : Number(input.maxColors),
+            dither: input.dither as
+              | "none"
+              | "ordered-4x4"
+              | "floyd-steinberg"
+              | undefined,
+            fit: input.fit as "contain" | "cover" | "stretch" | undefined,
+            sampling: input.sampling as "smooth" | "nearest" | undefined,
+            alphaThreshold:
+              input.alphaThreshold === undefined
+                ? undefined
+                : Number(input.alphaThreshold),
+            preserveAlpha:
+              input.preserveAlpha === undefined
+                ? undefined
+                : input.preserveAlpha === true,
+          },
+          context?.signal,
+        );
+        assertActive(context?.signal);
+        onStatus?.("pixelizeImage completed");
+        return output;
+      },
       { destructiveHint: true },
     ),
     definition(
@@ -251,8 +355,8 @@ export async function registerPixelForgeTools(
         additionalProperties: false,
         required: ["width", "height"],
         properties: {
-          width: integer(1, 512),
-          height: integer(1, 512),
+          width: integer(1, 1024),
+          height: integer(1, 1024),
           anchor: {
             type: "string",
             enum: [
@@ -355,7 +459,7 @@ export async function registerPixelForgeTools(
           pixels: {
             type: "array",
             minItems: 1,
-            maxItems: 262144,
+            maxItems: 1048576,
             items: {
               type: "object",
               additionalProperties: false,
@@ -411,10 +515,10 @@ export async function registerPixelForgeTools(
                 additionalProperties: false,
                 required: ["x", "y", "width", "height"],
                 properties: {
-                  x: integer(0, 511),
-                  y: integer(0, 511),
-                  width: integer(1, 512),
-                  height: integer(1, 512),
+                  x: integer(0, 1023),
+                  y: integer(0, 1023),
+                  width: integer(1, 1024),
+                  height: integer(1, 1024),
                 },
               },
               { type: "null" },
@@ -548,10 +652,10 @@ export async function registerPixelForgeTools(
     definition(
       "set_zoom",
       "Set canvas zoom",
-      "Set the editor's integer pixel zoom multiplier from 2 to 32.",
+      "Set the editor's integer pixel zoom multiplier from 1 to 64.",
       {
         type: "object", additionalProperties: false, required: ["zoom"],
-        properties: { zoom: integer(2, 32) },
+        properties: { zoom: integer(1, 64) },
       },
       (input, context) => call("setZoom", [input.zoom], context),
     ),

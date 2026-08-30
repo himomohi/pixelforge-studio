@@ -199,8 +199,8 @@ export function NavigatorPanel({
         <span className="w-9 font-mono text-[10px] text-[#8993a6]">{zoom}×</span>
         <Slider
           value={[zoom]}
-          min={2}
-          max={32}
+          min={1}
+          max={64}
           step={1}
           onValueChange={(values) => onZoomChange(values[0] ?? zoom)}
           aria-label="Canvas zoom"

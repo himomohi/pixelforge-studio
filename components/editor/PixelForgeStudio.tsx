@@ -51,10 +51,12 @@ import { Toaster } from "@/components/ui/sonner";
 import { PixelCanvas, type CanvasPoint } from "./PixelCanvas";
 import {
   ExportDialog,
+  ImagePixelDialog,
   NewProjectDialog,
   ShortcutsDialog,
   WebMCPDialog,
   type ExportOptions,
+  type ImagePixelSource,
   type WebMCPTool,
 } from "./EditorDialogs";
 import {
@@ -80,7 +82,18 @@ import {
   exportSpriteSheet,
   sanitizeFilename,
 } from "@/lib/pixelforge/export";
-import { importProjectJson, importRaster } from "@/lib/pixelforge/import";
+import { importProjectJson } from "@/lib/pixelforge/import";
+import {
+  imageDataUrlToBlob,
+  inspectRaster,
+  pixelizeRaster,
+  type PixelizeOptions,
+} from "@/lib/pixelforge/pixelize";
+import {
+  getProjectPreset,
+  projectPresets,
+  recommendedZoom,
+} from "@/lib/pixelforge/presets";
 import {
   ellipse as drawEllipse,
   floodFill,
@@ -96,7 +109,10 @@ import type { Anchor, PixelPatch, PixelProject, ToolId } from "@/lib/pixelforge/
 
 const WEBMCP_TOOLS: WebMCPTool[] = [
   ["get_project_state", "Read project, frame, layer, and tool state"],
+  ["list_project_presets", "List sprite, tile, web-game, and console presets"],
+  ["create_from_preset", "Create a project from a production preset"],
   ["create_project", "Create a pixel canvas"],
+  ["image_to_pixel", "Convert a base64 image into editable pixel art"],
   ["import_project", "Restore a complete project object"],
   ["rename_project", "Rename the project"],
   ["resize_canvas", "Resize and anchor every cel"],
@@ -161,6 +177,11 @@ export function PixelForgeStudio() {
   const [webMcpAvailable, setWebMcpAvailable] = React.useState(false);
   const [webMcpStatus, setWebMcpStatus] = React.useState("Not detected");
   const [webMcpRefreshKey, setWebMcpRefreshKey] = React.useState(0);
+  const [pixelSource, setPixelSource] = React.useState<
+    (ImagePixelSource & { file: File; key: string }) | null
+  >(null);
+  const [pixelizeOpen, setPixelizeOpen] = React.useState(false);
+  const [pixelizing, setPixelizing] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const previousToolRef = React.useRef<ToolId | null>(null);
 
@@ -261,13 +282,47 @@ export function PixelForgeStudio() {
         file.name.endsWith(".pxforge") ||
         file.type === "application/json" ||
         file.name.endsWith(".json");
-      const next = isProject
-        ? importProjectJson(await file.text())
-        : await importRaster(file, file.name.replace(/\.[^.]+$/, ""));
-      editor.replaceProject(next);
-      toast.success(isProject ? "Project opened" : "Image imported");
+      if (isProject) {
+        const next = importProjectJson(await file.text());
+        editor.replaceProject(next);
+        editor.setZoom(recommendedZoom(next.width, next.height));
+        toast.success("Project opened");
+        return;
+      }
+      const dimensions = await inspectRaster(file);
+      setPixelSource({
+        file,
+        name: file.name.replace(/\.[^.]+$/, "") || "Pixelized image",
+        width: dimensions.width,
+        height: dimensions.height,
+        key: `${file.name}-${file.size}-${file.lastModified}`,
+      });
+      setPixelizeOpen(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Import failed");
+    }
+  };
+
+  const handlePixelize = async (options: PixelizeOptions) => {
+    if (!pixelSource) return;
+    setPixelizing(true);
+    try {
+      const next = await pixelizeRaster(
+        pixelSource.file,
+        pixelSource.name,
+        options,
+      );
+      editor.replaceProject(next);
+      editor.setZoom(recommendedZoom(next.width, next.height));
+      setPixelizeOpen(false);
+      setPixelSource(null);
+      toast.success(
+        `Image converted to ${next.width}×${next.height} editable pixel art`,
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Conversion failed");
+    } finally {
+      setPixelizing(false);
     }
   };
 
@@ -342,11 +397,11 @@ export function PixelForgeStudio() {
       } else if (event.key === "]") {
         editor.setBrushSize(editor.projectRef.current.tool.size + 1);
       } else if (event.key === "+" || event.key === "=") {
-        editor.setZoom(editor.zoom + 2);
+        editor.setZoom(editor.zoom + (editor.zoom < 8 ? 1 : 2));
       } else if (event.key === "-") {
-        editor.setZoom(editor.zoom - 2);
+        editor.setZoom(editor.zoom - (editor.zoom <= 8 ? 1 : 2));
       } else if (event.key === "0") {
-        editor.setZoom(project.width <= 32 ? 16 : project.width <= 64 ? 8 : 4);
+        editor.setZoom(recommendedZoom(project.width, project.height));
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
@@ -363,6 +418,7 @@ export function PixelForgeStudio() {
     };
   }, [
     editor,
+    project.height,
     project.width,
   ]);
 
@@ -376,9 +432,9 @@ export function PixelForgeStudio() {
     const reject = (message: string): ToolOutput => ({ ok: false, message });
     const activeLayerFor = (latest = projectRef.current) =>
       latest.layers.find((layer) => layer.id === latest.activeLayerId);
-    const assertExportActive = (signal?: AbortSignal) => {
+    const assertWebMcpActive = (signal?: AbortSignal) => {
       if (signal?.aborted) {
-        throw new DOMException("The WebMCP export was cancelled.", "AbortError");
+        throw new DOMException("The WebMCP operation was cancelled.", "AbortError");
       }
     };
     const api: EditorAutomationApi = {
@@ -419,6 +475,39 @@ export function PixelForgeStudio() {
           })),
         } as ToolOutput;
       },
+      listProjectPresets: () =>
+        projectPresets.map((preset) => ({
+          id: preset.id,
+          label: preset.label,
+          category: preset.category,
+          width: preset.width,
+          height: preset.height,
+          paletteName: preset.paletteName ?? null,
+          description: preset.description,
+          reference: preset.reference ?? null,
+        })) as ToolOutput,
+      createFromPreset: (input) => {
+        const preset = getProjectPreset(input.presetId);
+        if (!preset) return reject("Unknown project preset");
+        const next = editor.newProject({
+          name: input.name || preset.label,
+          width: preset.width,
+          height: preset.height,
+          transparent: true,
+          presetId: preset.id,
+          paletteName: preset.paletteName,
+        });
+        return {
+          ok: true,
+          message: "Preset project created",
+          projectId: next.id,
+          frameCount: next.frames.length,
+          layerCount: next.layers.length,
+          presetId: preset.id,
+          width: next.width,
+          height: next.height,
+        } as ToolOutput;
+      },
       createProject: (input) => {
         const next = editor.newProject({
           name: input.name || "Agent sprite",
@@ -427,6 +516,37 @@ export function PixelForgeStudio() {
           transparent: true,
         });
         return result("Project created", next);
+      },
+      pixelizeImage: async (input, signal) => {
+        assertWebMcpActive(signal);
+        const blob = imageDataUrlToBlob(input.imageDataUrl);
+        const next = await pixelizeRaster(
+          blob,
+          input.name || "Agent pixel image",
+          {
+            width: input.width,
+            height: input.height,
+            maxColors: input.maxColors,
+            dither: input.dither,
+            fit: input.fit,
+            sampling: input.sampling,
+            alphaThreshold: input.alphaThreshold,
+            preserveAlpha: input.preserveAlpha,
+          },
+          signal,
+        );
+        assertWebMcpActive(signal);
+        editor.replaceProject(next);
+        editor.setZoom(recommendedZoom(next.width, next.height));
+        return {
+          ok: true,
+          message: "Image converted into an editable pixel project",
+          projectId: next.id,
+          width: next.width,
+          height: next.height,
+          paletteSize: next.palettes[0]?.colors.length ?? 0,
+          source: "data-url",
+        } as ToolOutput;
       },
       importProject: (value) => {
         const next = importProjectJson(value);
@@ -763,13 +883,13 @@ export function PixelForgeStudio() {
         return summary("Playback " + action);
       },
       exportAsset: async (format, options, signal): Promise<ToolOutput> => {
-        assertExportActive(signal);
+        assertWebMcpActive(signal);
         const latest = projectRef.current;
         const scale = Math.max(1, Math.floor(Number(options?.scale ?? 1)));
         const base = sanitizeFilename(latest.name);
         if (format === "png") {
           const blob = await exportFramePng(latest, latest.activeFrameId, scale);
-          assertExportActive(signal);
+          assertWebMcpActive(signal);
           const filename = base + "-frame.png";
           downloadBlob(blob, filename);
           return {
@@ -785,7 +905,7 @@ export function PixelForgeStudio() {
             scale,
             loop: options?.loop === false ? 1 : 0,
           });
-          assertExportActive(signal);
+          assertWebMcpActive(signal);
           const filename = base + ".gif";
           downloadBlob(blob, filename);
           return {
@@ -808,7 +928,7 @@ export function PixelForgeStudio() {
             gap: Number(options?.gap || 0),
             scale,
           });
-          assertExportActive(signal);
+          assertWebMcpActive(signal);
           const pngFilename = base + "-sheet.png";
           const jsonFilename = base + "-sheet.json";
           downloadBlob(output.png, pngFilename);
@@ -826,7 +946,7 @@ export function PixelForgeStudio() {
           };
         }
         const blob = exportProjectJson(latest);
-        assertExportActive(signal);
+        assertWebMcpActive(signal);
         const filename = base + ".pxforge";
         downloadBlob(blob, filename);
         return {
@@ -1180,13 +1300,17 @@ export function PixelForgeStudio() {
           </MobileNavButton>
           <MobileNavButton
             label="Zoom out"
-            onClick={() => editor.setZoom(editor.zoom - 2)}
+            onClick={() =>
+              editor.setZoom(editor.zoom - (editor.zoom <= 8 ? 1 : 2))
+            }
           >
             <ZoomOut />
           </MobileNavButton>
           <MobileNavButton
             label="Zoom in"
-            onClick={() => editor.setZoom(editor.zoom + 2)}
+            onClick={() =>
+              editor.setZoom(editor.zoom + (editor.zoom < 8 ? 1 : 2))
+            }
           >
             <ZoomIn />
           </MobileNavButton>
@@ -1209,6 +1333,20 @@ export function PixelForgeStudio() {
             toast.success("New canvas created");
           }}
         />
+        {pixelSource ? (
+          <ImagePixelDialog
+            key={pixelSource.key}
+            open={pixelizeOpen}
+            onOpenChange={(open) => {
+              if (pixelizing) return;
+              setPixelizeOpen(open);
+              if (!open) setPixelSource(null);
+            }}
+            source={pixelSource}
+            converting={pixelizing}
+            onConvert={(options) => void handlePixelize(options)}
+          />
+        ) : null}
         <ExportDialog
           open={exportOpen}
           onOpenChange={setExportOpen}

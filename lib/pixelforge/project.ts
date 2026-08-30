@@ -1,15 +1,16 @@
 import { Anchor, Cel, Frame, Layer, PixelProject, Pixels } from './types';
+import { MAX_CANVAS_DIMENSION, MAX_PROJECT_PIXEL_CELLS } from './presets';
 let seq = 0; const id = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(++seq).toString(36)}`;
 export const blankPixels = (w: number, h: number): Pixels => Array(w*h).fill('');
 export const pixelIndex = (x:number,y:number,w:number) => y*w+x;
-export function createProject(width=32,height=32,name='Untitled'): PixelProject { if(width<1||height<1||width>512||height>512) throw new Error('Canvas dimensions must be between 1 and 512 pixels'); const l:Layer={id:id('layer'),name:'Layer 1',visible:true,locked:false,opacity:1,frameIds:[]}; const f:Frame={id:id('frame'),index:0,duration:100}; const c:Cel={id:id('cel'),frameId:f.id,layerId:l.id,pixels:blankPixels(width,height),duration:100}; l.frameIds=[c.id]; return {version:1,id:id('project'),name,width,height,layers:[l],frames:[f],cels:{[c.id]:c},palettes:[],activeLayerId:l.id,activeFrameId:f.id,tool:{tool:'pencil',color:'#000000',size:1,fill:false},onionSkin:{enabled:false,previous:1,next:1,opacity:.25},symmetry:{enabled:false,x:false,y:false,centerX:width/2,centerY:height/2},selection:null}; }
+export function createProject(width=32,height=32,name='Untitled'): PixelProject { if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||width>MAX_CANVAS_DIMENSION||height>MAX_CANVAS_DIMENSION) throw new Error(`Canvas dimensions must be whole numbers between 1 and ${MAX_CANVAS_DIMENSION} pixels`); const l:Layer={id:id('layer'),name:'Layer 1',visible:true,locked:false,opacity:1,frameIds:[]}; const f:Frame={id:id('frame'),index:0,duration:100}; const c:Cel={id:id('cel'),frameId:f.id,layerId:l.id,pixels:blankPixels(width,height),duration:100}; l.frameIds=[c.id]; return {version:1,id:id('project'),name,width,height,layers:[l],frames:[f],cels:{[c.id]:c},palettes:[],activeLayerId:l.id,activeFrameId:f.id,tool:{tool:'pencil',color:'#000000',size:1,fill:false},onionSkin:{enabled:false,previous:1,next:1,opacity:.25},symmetry:{enabled:false,x:false,y:false,centerX:width/2,centerY:height/2},selection:null}; }
 export const celFor = (p:PixelProject,layerId:string,frameId:string) => Object.values(p.cels).find(c=>c.layerId===layerId&&c.frameId===frameId);
 export function ensureCel(p:PixelProject,layerId:string,frameId:string): Cel { const c=celFor(p,layerId,frameId); if(!c) throw new Error('Cel not found'); return c; }
 export function resizePixels(src:Pixels,oldW:number,oldH:number,w:number,h:number,anchor:Anchor='top-left'):Pixels { const out=blankPixels(w,h); const dx=anchor.includes('right')?w-oldW:anchor.includes('left')?0:Math.floor((w-oldW)/2); const dy=anchor.includes('bottom')?h-oldH:anchor.includes('top')?0:Math.floor((h-oldH)/2); for(let y=0;y<oldH;y++)for(let x=0;x<oldW;x++){const nx=x+dx,ny=y+dy;if(nx>=0&&ny>=0&&nx<w&&ny<h)out[pixelIndex(nx,ny,w)]=src[pixelIndex(x,y,oldW)];} return out; }
 export function validateProject(p:unknown): p is PixelProject {
   const x=p as PixelProject;
   if(!x||x.version!==1||typeof x.id!=='string'||typeof x.name!=='string')return false;
-  if(!Number.isInteger(x.width)||x.width<1||x.width>512||!Number.isInteger(x.height)||x.height<1||x.height>512)return false;
+  if(!Number.isInteger(x.width)||x.width<1||x.width>MAX_CANVAS_DIMENSION||!Number.isInteger(x.height)||x.height<1||x.height>MAX_CANVAS_DIMENSION)return false;
   if(!Array.isArray(x.layers)||x.layers.length<1||!Array.isArray(x.frames)||x.frames.length<1||!x.cels||typeof x.cels!=='object'||Array.isArray(x.cels)||!Array.isArray(x.palettes))return false;
   const layerIds=new Set(x.layers.map(layer=>layer.id));
   const frameIds=new Set(x.frames.map(frame=>frame.id));
@@ -17,6 +18,7 @@ export function validateProject(p:unknown): p is PixelProject {
   if(x.frames.some((frame,index)=>typeof frame.id!=='string'||frame.index!==index||!Number.isFinite(frame.duration)||frame.duration<1))return false;
   const cels=Object.entries(x.cels);
   if(cels.length!==x.layers.length*x.frames.length)return false;
+  if(cels.length*x.width*x.height>MAX_PROJECT_PIXEL_CELLS)return false;
   const pairs=new Set<string>();
   const color=/^$|^#[0-9a-f]{3,4}$|^#[0-9a-f]{6}([0-9a-f]{2})?$/i;
   for(const [key,cel] of cels){

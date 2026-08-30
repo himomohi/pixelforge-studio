@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, Download, ExternalLink, Info, Keyboard, Layers, Plus, Sparkles } from "lucide-react"
+import { Check, Download, ExternalLink, ImageDown, Info, Keyboard, Layers, Loader2, Plus, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -10,34 +10,59 @@ import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import { MAX_CANVAS_DIMENSION, projectPresetCategories, projectPresets } from "@/lib/pixelforge/presets"
+import type { PixelizeOptions } from "@/lib/pixelforge/pixelize"
 
-const presets = [16, 32, 64, 128] as const
-type Preset = (typeof presets)[number] | "custom"
-
-export interface NewProjectOptions { name: string; width: number; height: number; transparent: boolean; background: string }
+export interface NewProjectOptions { name: string; width: number; height: number; transparent: boolean; background: string; presetId?: string; paletteName?: string }
 export interface NewProjectDialogProps { open: boolean; onOpenChange: (open: boolean) => void; onCreate: (options: NewProjectOptions) => void; initialName?: string }
 
 export function NewProjectDialog({ open, onOpenChange, onCreate, initialName = "Untitled sprite" }: NewProjectDialogProps) {
   const [name, setName] = React.useState(initialName)
-  const [preset, setPreset] = React.useState<Preset>(32)
+  const [presetId, setPresetId] = React.useState("sprite-indie-32")
+  const [category, setCategory] = React.useState("sprites")
   const [width, setWidth] = React.useState(32)
   const [height, setHeight] = React.useState(32)
+  const [paletteName, setPaletteName] = React.useState<string | undefined>("Arcade")
   const [transparent, setTransparent] = React.useState(true)
   const [background, setBackground] = React.useState("#171922")
-  const valid = name.trim().length > 0 && width >= 1 && width <= 256 && height >= 1 && height <= 256
-  const choose = (value: Preset) => { setPreset(value); if (value !== "custom") { setWidth(value); setHeight(value) } }
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="border-white/10 bg-[#11131b] text-white sm:max-w-[500px]">
+  const valid = name.trim().length > 0 && Number.isInteger(width) && width >= 1 && width <= MAX_CANVAS_DIMENSION && Number.isInteger(height) && height >= 1 && height <= MAX_CANVAS_DIMENSION
+  const choose = (id: string) => { const preset = projectPresets.find(item => item.id === id); if (!preset) return; setPresetId(id); setWidth(preset.width); setHeight(preset.height); setPaletteName(preset.paletteName) }
+  const setCustomWidth = (value: number) => { setPresetId("custom"); setPaletteName(undefined); setWidth(value) }
+  const setCustomHeight = (value: number) => { setPresetId("custom"); setPaletteName(undefined); setHeight(value) }
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] overflow-y-auto border-white/10 bg-[#11131b] text-white sm:max-w-[720px]">
     <DialogHeader><DialogTitle className="flex items-center gap-2 font-mono"><Plus className="size-4 text-violet-400" />New project</DialogTitle><DialogDescription className="text-slate-400">Set up a canvas for your next pixel creation.</DialogDescription></DialogHeader>
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="space-y-2"><Label htmlFor="project-name">Project name</Label><Input id="project-name" value={name} onChange={e => setName(e.target.value)} className="border-white/10 bg-white/5" autoFocus /></div>
-      <div className="space-y-2"><Label>Canvas size</Label><div className="grid grid-cols-4 gap-2">{presets.map(size => <Button key={size} type="button" variant="outline" onClick={() => choose(size)} className={cn("border-white/10 bg-white/5 font-mono", preset === size && "border-violet-400 bg-violet-500/20 text-violet-200")}>{size}×{size}</Button>)}<Button type="button" variant="outline" onClick={() => choose("custom")} className={cn("border-white/10 bg-white/5", preset === "custom" && "border-violet-400 bg-violet-500/20")}>Custom</Button></div></div>
-      <div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label htmlFor="canvas-width">Width</Label><Input id="canvas-width" type="number" min={1} max={256} value={width} onChange={e => { setPreset("custom"); setWidth(Number(e.target.value)) }} /></div><div className="space-y-2"><Label htmlFor="canvas-height">Height</Label><Input id="canvas-height" type="number" min={1} max={256} value={height} onChange={e => { setPreset("custom"); setHeight(Number(e.target.value)) }} /></div></div>
+      <div className="space-y-2"><div className="flex items-center justify-between"><Label>Production presets</Label><Button type="button" variant="ghost" size="xs" onClick={() => { setPresetId("custom"); setPaletteName(undefined) }} className={cn("text-xs", presetId === "custom" && "text-violet-300")}>Custom size</Button></div><Tabs value={category} onValueChange={setCategory}><TabsList className="grid w-full grid-cols-4 bg-white/5">{projectPresetCategories.map(item => <TabsTrigger key={item.id} value={item.id} className="text-[11px]">{item.label}</TabsTrigger>)}</TabsList>{projectPresetCategories.map(group => <TabsContent key={group.id} value={group.id} className="mt-2"><div className="grid max-h-52 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">{projectPresets.filter(item => item.category === group.id).map(item => <button key={item.id} type="button" onClick={() => choose(item.id)} className={cn("rounded-lg border p-2.5 text-left transition-colors", presetId === item.id ? "border-violet-400 bg-violet-500/15" : "border-white/10 bg-white/[.03] hover:bg-white/[.07]")}><span className="block text-xs font-medium text-white">{item.label}</span><span className="mt-1 block font-mono text-[10px] text-violet-300">{item.width}×{item.height}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{item.description}</span></button>)}</div></TabsContent>)}</Tabs></div>
+      <div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label htmlFor="canvas-width">Width</Label><Input id="canvas-width" type="number" min={1} max={MAX_CANVAS_DIMENSION} value={width} onChange={e => setCustomWidth(Number(e.target.value))} /></div><div className="space-y-2"><Label htmlFor="canvas-height">Height</Label><Input id="canvas-height" type="number" min={1} max={MAX_CANVAS_DIMENSION} value={height} onChange={e => setCustomHeight(Number(e.target.value))} /></div></div>
+      <p className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-slate-400">Up to {MAX_CANVAS_DIMENSION}×{MAX_CANVAS_DIMENSION} for fine-detail game art. Large canvases automatically use a lower starting zoom.</p>
       <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[.03] p-3"><div><Label htmlFor="transparent">Transparent background</Label><p className="text-xs text-slate-500">Keep the canvas alpha channel</p></div><Switch id="transparent" checked={transparent} onCheckedChange={setTransparent} /></div>
       {!transparent && <div className="space-y-2"><Label htmlFor="background">Background color</Label><div className="flex gap-2"><Input id="background" type="color" value={background} onChange={e => setBackground(e.target.value)} className="h-10 w-14 p-1" /><Input aria-label="Background hex" value={background} onChange={e => setBackground(e.target.value)} className="font-mono" /></div></div>}
     </div>
-    <DialogFooter><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!valid} onClick={() => onCreate({ name: name.trim(), width, height, transparent, background })}>Create canvas</Button></DialogFooter>
+    <DialogFooter><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!valid} onClick={() => onCreate({ name: name.trim(), width, height, transparent, background, presetId: presetId === "custom" ? undefined : presetId, paletteName })}>Create {width}×{height}</Button></DialogFooter>
   </DialogContent></Dialog>
+}
+
+export interface ImagePixelSource { name: string; width: number; height: number }
+export interface ImagePixelDialogProps { open: boolean; onOpenChange: (open: boolean) => void; source: ImagePixelSource; converting?: boolean; onConvert: (options: PixelizeOptions) => void }
+function targetFor(source: ImagePixelSource, longest: number) { const scale = longest / Math.max(source.width, source.height); return { width: Math.max(1, Math.round(source.width * scale)), height: Math.max(1, Math.round(source.height * scale)) } }
+export function ImagePixelDialog({ open, onOpenChange, source, converting = false, onConvert }: ImagePixelDialogProps) {
+  const initial = targetFor(source, 128)
+  const [width, setWidth] = React.useState(initial.width)
+  const [height, setHeight] = React.useState(initial.height)
+  const [lockAspect, setLockAspect] = React.useState(true)
+  const [maxColors, setMaxColors] = React.useState(16)
+  const [dither, setDither] = React.useState<PixelizeOptions["dither"]>("ordered-4x4")
+  const [fit, setFit] = React.useState<PixelizeOptions["fit"]>("contain")
+  const [sampling, setSampling] = React.useState<PixelizeOptions["sampling"]>("smooth")
+  const [preserveAlpha, setPreserveAlpha] = React.useState(true)
+  const [alphaThreshold, setAlphaThreshold] = React.useState(8)
+  const changeWidth = (value: number) => { const next = Math.max(1, Math.min(MAX_CANVAS_DIMENSION, value)); setWidth(next); if (lockAspect) setHeight(Math.max(1, Math.min(MAX_CANVAS_DIMENSION, Math.round(next * source.height / source.width)))) }
+  const changeHeight = (value: number) => { const next = Math.max(1, Math.min(MAX_CANVAS_DIMENSION, value)); setHeight(next); if (lockAspect) setWidth(Math.max(1, Math.min(MAX_CANVAS_DIMENSION, Math.round(next * source.width / source.height)))) }
+  const chooseLongest = (longest: number) => { const target = targetFor(source, longest); setWidth(target.width); setHeight(target.height) }
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] overflow-y-auto border-white/10 bg-[#11131b] text-white sm:max-w-[620px]"><DialogHeader><DialogTitle className="flex items-center gap-2 font-mono"><ImageDown className="size-4 text-violet-400" />Convert image to pixel art</DialogTitle><DialogDescription className="text-slate-400">{source.name} · {source.width}×{source.height}. Downsample, quantize, and dither it into an editable project.</DialogDescription></DialogHeader><div className="space-y-5"><div className="space-y-2"><Label>Pixel target</Label><div className="grid grid-cols-4 gap-2">{[32, 64, 128, 256].map(size => <Button key={size} type="button" variant="outline" className="border-white/10 bg-white/5 font-mono text-xs" onClick={() => chooseLongest(size)}>{size}px</Button>)}</div><div className="grid grid-cols-2 gap-3"><div className="space-y-1"><Label htmlFor="pixel-width" className="text-xs">Width</Label><Input id="pixel-width" type="number" min={1} max={MAX_CANVAS_DIMENSION} value={width} onChange={event => changeWidth(Number(event.target.value))} /></div><div className="space-y-1"><Label htmlFor="pixel-height" className="text-xs">Height</Label><Input id="pixel-height" type="number" min={1} max={MAX_CANVAS_DIMENSION} value={height} onChange={event => changeHeight(Number(event.target.value))} /></div></div><div className="flex items-center justify-between rounded border border-white/10 px-3 py-2"><span className="text-xs text-slate-400">Lock source aspect ratio</span><Switch checked={lockAspect} onCheckedChange={setLockAspect} aria-label="Lock source aspect ratio" /></div></div><div className="space-y-3"><div className="flex items-center justify-between"><Label>Palette size</Label><span className="font-mono text-xs text-violet-300">{maxColors} colors</span></div><Slider value={[maxColors]} min={2} max={64} step={1} onValueChange={values => setMaxColors(values[0] ?? maxColors)} aria-label="Palette size" /></div><div className="grid gap-3 sm:grid-cols-3"><div className="space-y-1.5"><Label className="text-xs">Dithering</Label><Select value={dither} onValueChange={value => setDither(value as PixelizeOptions["dither"])}><SelectTrigger className="w-full" aria-label="Dithering"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem><SelectItem value="ordered-4x4">Ordered 4×4</SelectItem><SelectItem value="floyd-steinberg">Floyd–Steinberg</SelectItem></SelectContent></Select></div><div className="space-y-1.5"><Label className="text-xs">Image fit</Label><Select value={fit} onValueChange={value => setFit(value as PixelizeOptions["fit"])}><SelectTrigger className="w-full" aria-label="Image fit"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="contain">Contain</SelectItem><SelectItem value="cover">Cover</SelectItem><SelectItem value="stretch">Stretch</SelectItem></SelectContent></Select></div><div className="space-y-1.5"><Label className="text-xs">Downsampling</Label><Select value={sampling} onValueChange={value => setSampling(value as PixelizeOptions["sampling"])}><SelectTrigger className="w-full" aria-label="Downsampling"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="smooth">Smooth</SelectItem><SelectItem value="nearest">Hard nearest</SelectItem></SelectContent></Select></div></div><div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center justify-between rounded border border-white/10 p-3"><div><Label className="text-xs">Preserve alpha</Label><p className="text-[10px] text-slate-500">Keep soft transparent edges</p></div><Switch checked={preserveAlpha} onCheckedChange={setPreserveAlpha} aria-label="Preserve alpha" /></div><div className="space-y-2 rounded border border-white/10 p-3"><div className="flex justify-between"><Label className="text-xs">Alpha cutoff</Label><span className="font-mono text-[10px] text-slate-400">{alphaThreshold}</span></div><Slider value={[alphaThreshold]} min={0} max={255} step={1} onValueChange={values => setAlphaThreshold(values[0] ?? alphaThreshold)} aria-label="Alpha cutoff" /></div></div></div><DialogFooter><Button variant="ghost" disabled={converting} onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={converting} onClick={() => onConvert({ width, height, maxColors, dither, fit, sampling, preserveAlpha, alphaThreshold })}>{converting ? <Loader2 className="size-4 animate-spin" /> : <ImageDown className="size-4" />}{converting ? "Converting…" : `Create ${width}×${height}`}</Button></DialogFooter></DialogContent></Dialog>
 }
 
 export type ExportFormat = "png" | "gif"

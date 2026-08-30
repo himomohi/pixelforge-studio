@@ -1,5 +1,6 @@
 import { createProject, ensureCel, validateProject } from "./project";
 import { quantizePalette, type RGB } from "./palettes";
+import { MAX_CANVAS_DIMENSION } from "./presets";
 import type { PixelProject } from "./types";
 
 function cloneProject(project: PixelProject): PixelProject {
@@ -47,9 +48,9 @@ export async function importRaster(
   }
 
   const bitmap = await createImageBitmap(file);
-  if (bitmap.width < 1 || bitmap.height < 1 || bitmap.width > 512 || bitmap.height > 512) {
+  if (bitmap.width < 1 || bitmap.height < 1 || bitmap.width > MAX_CANVAS_DIMENSION || bitmap.height > MAX_CANVAS_DIMENSION) {
     bitmap.close();
-    throw new Error("Images must be between 1×1 and 512×512 pixels.");
+    throw new Error(`Images must be between 1×1 and ${MAX_CANVAS_DIMENSION}×${MAX_CANVAS_DIMENSION} pixels.`);
   }
 
   const canvas = document.createElement("canvas");

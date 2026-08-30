@@ -4,6 +4,7 @@ export const rgbToHex = ({ r, g, b }: RGB): string => `#${[r,g,b].map(v => Math.
 export const curatedPalettes: Record<string, string[]> = {
   "PICO-8": ["#000000","#1d2b53","#7e2553","#008751","#ab5236","#5f574f","#c2c3c7","#fff1e8","#ff004d","#ffa300","#ffec27","#00e436","#29adff","#83769c","#ff77a8","#ffccaa"],
   "Game Boy": ["#0f380f","#306230","#8bac0f","#9bbc0f"],
+  Playdate: ["#000000", "#ffffff"],
   "NES-like": ["#000000","#fcfcfc","#f83800","#ac7c00","#0078f8","#00a800","#b800b8","#6844fc"],
   Synthwave: ["#120458","#321450","#5f1a72","#b42e8a","#f45b9a","#ffb3cb","#fdf6e3"],
   Grayscale: ["#000000","#404040","#808080","#bfbfbf","#ffffff"],

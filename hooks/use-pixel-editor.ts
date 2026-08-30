@@ -10,6 +10,7 @@ import {
   setActiveProjectKey,
 } from "@/lib/pixelforge/storage";
 import { curatedPalettes } from "@/lib/pixelforge/palettes";
+import { recommendedZoom } from "@/lib/pixelforge/presets";
 import type {
   PixelPatch,
   PixelProject,
@@ -33,6 +34,8 @@ export type NewProjectInput = {
   height: number;
   transparent?: boolean;
   background?: string;
+  presetId?: string;
+  paletteName?: string;
 };
 
 export function usePixelEditor() {
@@ -116,15 +119,26 @@ export function usePixelEditor() {
   const newProject = React.useCallback(
     (input: NewProjectInput) => {
       const next = createProject(input.width, input.height, input.name);
-      const colors = curatedPalettes["PICO-8"];
-      next.palettes = [{ id: "palette-pico8", name: "PICO-8", colors }];
-      next.tool.color = colors[8];
+      const paletteName =
+        input.paletteName && curatedPalettes[input.paletteName]
+          ? input.paletteName
+          : "PICO-8";
+      const colors = curatedPalettes[paletteName];
+      next.palettes = [
+        {
+          id: "palette-" + paletteName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+          name: paletteName,
+          colors: [...colors],
+        },
+      ];
+      next.tool.color = colors[Math.min(8, colors.length - 1)] ?? "#ffffff";
       if (!input.transparent) {
         ensureCel(next, next.activeLayerId, next.activeFrameId).pixels.fill(
           input.background ?? "#111827",
         );
       }
       replaceProject(next);
+      setZoom(recommendedZoom(input.width, input.height));
       return next;
     },
     [replaceProject],
@@ -220,7 +234,7 @@ export function usePixelEditor() {
     setPrimaryColor,
     setBrushSize,
     zoom,
-    setZoom: (value: number) => setZoom(Math.max(2, Math.min(32, value))),
+    setZoom: (value: number) => setZoom(Math.max(1, Math.min(64, value))),
     showGrid,
     setShowGrid,
     isPlaying,
