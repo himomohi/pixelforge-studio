@@ -49,4 +49,4 @@ export function createProjectRepository(): ProjectRepository {
   };
 }
 export function getActiveProjectKey(): string | null { try { return isBrowser() ? window.localStorage.getItem(ACTIVE_KEY) : null; } catch { return null; } }
-export function setActiveProjectKey(key: string | null): void { try { if (!isBrowser()) return; key === null ? window.localStorage.removeItem(ACTIVE_KEY) : window.localStorage.setItem(ACTIVE_KEY, key); } catch { /* private mode */ } }
+export function setActiveProjectKey(key: string | null): void { try { if (!isBrowser()) return; if (key === null) window.localStorage.removeItem(ACTIVE_KEY); else window.localStorage.setItem(ACTIVE_KEY, key); } catch { /* private mode */ } }

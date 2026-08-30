@@ -1,4 +1,4 @@
-import { Anchor, Cel, Frame, Layer, Palette, Pixel, PixelProject, Pixels } from './types';
+import { Anchor, Cel, Frame, Layer, PixelProject, Pixels } from './types';
 let seq = 0; const id = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(++seq).toString(36)}`;
 export const blankPixels = (w: number, h: number): Pixels => Array(w*h).fill('');
 export const pixelIndex = (x:number,y:number,w:number) => y*w+x;

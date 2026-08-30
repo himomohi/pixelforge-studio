@@ -1,34 +1,354 @@
-/** Browser-only, dependency-free exporters for PixelForge projects. */
-import type { Project, Frame, Layer } from './types'
+import { compositeFrameRgba } from "./render";
+import type { PixelProject } from "./types";
 
-export type SpriteSheetLayout = 'horizontal' | 'vertical' | 'grid'
-export interface SpriteSheetOptions { layout?: SpriteSheetLayout; columns?: number; gap?: number; scale?: number }
-export interface GifOptions { delay?: number | number[]; loop?: number; scale?: number }
+export type SpriteSheetLayout = "horizontal" | "vertical" | "grid";
 
-const safeName = (name: string) => (name || 'pixelforge').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'pixelforge'
-export function sanitizeFilename(name: string, fallback = 'pixelforge'): string { return safeName(name) || fallback }
-export function downloadBlob(blob: Blob, filename: string): void { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = sanitizeFilename(filename); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000) }
-
-type Px = [number, number, number, number]
-const parse = (s: string): Px => { if (!s || s === 'transparent') return [0, 0, 0, 0]; const h = s.replace('#', ''); const n = h.length === 3 ? h.split('').map(x => x + x).join('') : h; return [parseInt(n.slice(0, 2), 16) || 0, parseInt(n.slice(2, 4), 16) || 0, parseInt(n.slice(4, 6), 16) || 0, n.length >= 8 ? parseInt(n.slice(6, 8), 16) : 255] }
-const layerPixels = (l: Layer): string[] => { const p = (l as unknown as { pixels?: string[] | string }).pixels; return Array.isArray(p) ? p : typeof p === 'string' ? [...p] : [] }
-export function compositeFrame(frame: Frame, width: number, height: number): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(width * height * 4); const layers = ((frame as unknown as { layers?: Layer[] }).layers || []).filter(l => (l as unknown as { visible?: boolean }).visible !== false)
-  for (const l of layers) { const px = layerPixels(l), opacity = (l as unknown as { opacity?: number }).opacity ?? 1; for (let i = 0; i < width * height; i++) { const s = parse(px[i] || ''); const a = s[3] / 255 * opacity; if (!a) continue; const o = i * 4, da = out[o + 3] / 255, oa = a + da * (1 - a); out[o] = (s[0] * a + out[o] * da * (1 - a)) / oa; out[o + 1] = (s[1] * a + out[o + 1] * da * (1 - a)) / oa; out[o + 2] = (s[2] * a + out[o + 2] * da * (1 - a)) / oa; out[o + 3] = oa * 255 } } return out
+export interface SpriteSheetOptions {
+  layout?: SpriteSheetLayout;
+  columns?: number;
+  gap?: number;
+  scale?: number;
 }
-const crc = (d: Uint8Array) => { let c = 0xffffffff; for (const x of d) { c ^= x; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (c & 1 ? 0xedb88320 : 0) } return (c ^ 0xffffffff) >>> 0 }
-const u32 = (n: number) => new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255])
-async function deflate(data: Uint8Array): Promise<Uint8Array> { if ('CompressionStream' in globalThis) { const w = new (globalThis as unknown as { CompressionStream: new (x: string) => CompressionStream }).CompressionStream('deflate'); const writer = w.writable.getWriter(); writer.write(data); writer.close(); return new Uint8Array(await new Response(w.readable).arrayBuffer()) } const z = new Uint8Array(data.length + Math.ceil(data.length / 65535) * 5 + 6); z[0] = 0x78; z[1] = 1; let p = 2, off = 0; while (off < data.length) { const n = Math.min(65535, data.length - off); z[p++] = off + n >= data.length ? 1 : 0; z[p++] = n & 255; z[p++] = n >>> 8; z[p++] = (~n) & 255; z[p++] = (~n) >>> 8; z.set(data.subarray(off, off + n), p); p += n; off += n } z.set(u32(adler(data)), p); return z.subarray(0, p + 4) }
-const adler = (d: Uint8Array) => { let a = 1, b = 0; for (const x of d) { a = (a + x) % 65521; b = (b + a) % 65521 } return (b << 16) | a }
-export async function rgbaToPng(rgba: Uint8ClampedArray, width: number, height: number, scale = 1): Promise<Blob> { const raw = new Uint8Array(height * (width * 4 + 1)); for (let y = 0; y < height; y++) { raw[y * (width * 4 + 1)] = 0; raw.set(rgba.subarray(y * width * 4, (y + 1) * width * 4), y * (width * 4 + 1) + 1) } const ih = new Uint8Array(13); ih.set(u32(width), 0); ih.set(u32(height), 4); ih[8] = 8; ih[9] = 6; const chunk = (t: string, d: Uint8Array) => { const tb = new TextEncoder().encode(t), all = new Uint8Array(tb.length + d.length); all.set(tb); all.set(d, tb.length); return new Uint8Array([...u32(d.length), ...all, ...u32(crc(all))]) }; const body = new Uint8Array([...new Uint8Array([137,80,78,71,13,10,26,10]), ...chunk('IHDR', ih), ...chunk('IDAT', await deflate(raw)), ...chunk('IEND', new Uint8Array())]); if (scale === 1) return new Blob([body], { type: 'image/png' }); const c = document.createElement('canvas'); c.width = width * scale; c.height = height * scale; const x = c.getContext('2d')!; x.imageSmoothingEnabled = false; const im = new ImageData(rgba, width, height); x.putImageData(im, 0, 0); x.drawImage(c, 0, 0); return new Promise(r => c.toBlob(b => r(b!), 'image/png')) }
-export async function exportFramePng(frame: Frame, width: number, height: number, scale = 1): Promise<Blob> { return rgbaToPng(compositeFrame(frame, width, height), width, height, scale) }
-export async function exportProjectJson(project: Project): Promise<Blob> { return new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }) }
-export async function exportFrameSequence(project: Project, width: number, height: number, scale = 1): Promise<Blob[]> { return Promise.all((project as unknown as { frames: Frame[] }).frames.map(f => exportFramePng(f, width, height, scale))) }
-/** Animated GIF89a export using a global 3-3-2 palette and standards-compliant LZW blocks. */
-export async function exportAnimatedGif(frames: Frame[], width: number, height: number, options: GifOptions = {}): Promise<Blob> {
-  const bytes: number[] = [...new TextEncoder().encode('GIF89a'), width, 0, height, 0, 0xf7, 0, 0];
-  for (let i = 0; i < 256; i++) bytes.push(((i >> 5) & 7) * 36, ((i >> 2) & 7) * 36, (i & 3) * 85);
-  bytes.push(0x21, 0xff, 11, ...new TextEncoder().encode('NETSCAPE2.0'), 3, 1, options.loop ?? 0, (options.loop ?? 0) >> 8, 0);
-  for (let fi = 0; fi < frames.length; fi++) { const rgba = compositeFrame(frames[fi], width, height), idx: number[] = []; for (let i = 0; i < width * height; i++) { const o = i * 4; idx.push(rgba[o + 3] < 128 ? 0 : (rgba[o] & 0xe0) | ((rgba[o + 1] >> 3) & 0x1c) | (rgba[o + 2] >> 6)) } const d = Array.isArray(options.delay) ? options.delay[fi] || 0 : options.delay || 10; bytes.push(0x21, 0xf9, 4, 1, d & 255, d >> 8, 0, 0, 0x2c, 0, 0, 0, 0, width, 0, height, 0, 0, 8); const packed = lzwEncode(idx); for (let p = 0; p < packed.length; p += 255) { const n = Math.min(255, packed.length - p); bytes.push(n, ...packed.slice(p, p + n)) } bytes.push(0) } bytes.push(0x3b); return new Blob([new Uint8Array(bytes)], { type: 'image/gif' })
+
+export interface GifOptions {
+  loop?: number;
+  scale?: number;
 }
-function lzwEncode(input: number[]): number[] { const clear = 256, end = 257, dict = new Map<string, number>(); for (let i = 0; i < 256; i++) dict.set(String.fromCharCode(i), i); let next = 258, codeSize = 9, bits = 0, acc = 0, out: number[] = []; const put = (n: number) => { acc |= n << bits; bits += codeSize; while (bits >= 8) { out.push(acc & 255); acc >>>= 8; bits -= 8 } }; put(clear); let s = ''; for (const n of input) { const c = s + String.fromCharCode(n); if (dict.has(c)) s = c; else { put(dict.get(s)!); if (next < 4096) { dict.set(c, next++); if (next === (1 << codeSize) && codeSize < 12) codeSize++ } s = String.fromCharCode(n) } } if (s) put(dict.get(s)!); put(end); if (bits) out.push(acc); return out }
+
+export interface SpriteSheetMetadata {
+  app: "PixelForge Studio";
+  image: string;
+  frameWidth: number;
+  frameHeight: number;
+  scale: number;
+  columns: number;
+  rows: number;
+  frames: Array<{
+    index: number;
+    id: string;
+    duration: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+}
+
+export function sanitizeFilename(name: string, fallback = "pixelforge"): string {
+  const clean = (name || fallback)
+    .trim()
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100);
+  return clean || fallback;
+}
+
+export function downloadBlob(blob: Blob, filename: string): void {
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  link.href = url;
+  link.download = sanitizeFilename(filename);
+  link.style.display = "none";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function sourceCanvas(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas export is unavailable.");
+  context.putImageData(
+    new ImageData(new Uint8ClampedArray(rgba), width, height),
+    0,
+    0,
+  );
+  return canvas;
+}
+
+function canvasBlob(canvas: HTMLCanvasElement, type = "image/png"): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("The browser could not encode this image."));
+    }, type);
+  });
+}
+
+export async function rgbaToPng(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  scale = 1,
+): Promise<Blob> {
+  const safeScale = Math.max(1, Math.min(16, Math.floor(scale)));
+  const source = sourceCanvas(rgba, width, height);
+  if (safeScale === 1) return canvasBlob(source);
+
+  const output = document.createElement("canvas");
+  output.width = width * safeScale;
+  output.height = height * safeScale;
+  const context = output.getContext("2d");
+  if (!context) throw new Error("Canvas export is unavailable.");
+  context.imageSmoothingEnabled = false;
+  context.drawImage(source, 0, 0, output.width, output.height);
+  return canvasBlob(output);
+}
+
+export function compositeFrame(
+  project: PixelProject,
+  frameId = project.activeFrameId,
+): Uint8ClampedArray {
+  return compositeFrameRgba(project, frameId);
+}
+
+export function exportFramePng(
+  project: PixelProject,
+  frameId = project.activeFrameId,
+  scale = 1,
+): Promise<Blob> {
+  return rgbaToPng(
+    compositeFrameRgba(project, frameId),
+    project.width,
+    project.height,
+    scale,
+  );
+}
+
+export function exportProjectJson(project: PixelProject): Blob {
+  return new Blob([JSON.stringify(project, null, 2)], {
+    type: "application/x-pixelforge+json",
+  });
+}
+
+export function exportFrameSequence(
+  project: PixelProject,
+  scale = 1,
+): Promise<Blob[]> {
+  return Promise.all(
+    project.frames.map((frame) => exportFramePng(project, frame.id, scale)),
+  );
+}
+
+export async function exportSpriteSheet(
+  project: PixelProject,
+  options: SpriteSheetOptions = {},
+): Promise<{ png: Blob; json: Blob; metadata: SpriteSheetMetadata }> {
+  const frameCount = project.frames.length;
+  const scale = Math.max(1, Math.min(16, Math.floor(options.scale ?? 1)));
+  const gap = Math.max(0, Math.min(128, Math.floor(options.gap ?? 0))) * scale;
+  const layout = options.layout ?? "grid";
+  const columns =
+    layout === "vertical"
+      ? 1
+      : layout === "horizontal"
+        ? frameCount
+        : Math.max(1, Math.min(frameCount, Math.floor(options.columns ?? Math.ceil(Math.sqrt(frameCount)))));
+  const rows = Math.ceil(frameCount / columns);
+  const frameWidth = project.width * scale;
+  const frameHeight = project.height * scale;
+  const sheetWidth = columns * frameWidth + Math.max(0, columns - 1) * gap;
+  const sheetHeight = rows * frameHeight + Math.max(0, rows - 1) * gap;
+  const canvas = document.createElement("canvas");
+  canvas.width = sheetWidth;
+  canvas.height = sheetHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas export is unavailable.");
+  context.imageSmoothingEnabled = false;
+
+  const frames: SpriteSheetMetadata["frames"] = [];
+  project.frames.forEach((frame, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    const x = column * (frameWidth + gap);
+    const y = row * (frameHeight + gap);
+    const source = sourceCanvas(
+      compositeFrameRgba(project, frame.id),
+      project.width,
+      project.height,
+    );
+    context.drawImage(source, x, y, frameWidth, frameHeight);
+    frames.push({
+      index,
+      id: frame.id,
+      duration: frame.duration,
+      x,
+      y,
+      width: frameWidth,
+      height: frameHeight,
+    });
+  });
+
+  const imageName = `${sanitizeFilename(project.name)}-sheet.png`;
+  const metadata: SpriteSheetMetadata = {
+    app: "PixelForge Studio",
+    image: imageName,
+    frameWidth,
+    frameHeight,
+    scale,
+    columns,
+    rows,
+    frames,
+  };
+  return {
+    png: await canvasBlob(canvas),
+    json: new Blob([JSON.stringify(metadata, null, 2)], {
+      type: "application/json",
+    }),
+    metadata,
+  };
+}
+
+function littleEndian(value: number): [number, number] {
+  return [value & 0xff, (value >> 8) & 0xff];
+}
+
+function scaledRgba(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  scale: number,
+): Uint8ClampedArray {
+  if (scale === 1) return rgba;
+  const output = new Uint8ClampedArray(width * height * scale * scale * 4);
+  const outputWidth = width * scale;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sourceOffset = (y * width + x) * 4;
+      for (let offsetY = 0; offsetY < scale; offsetY += 1) {
+        for (let offsetX = 0; offsetX < scale; offsetX += 1) {
+          const destination =
+            ((y * scale + offsetY) * outputWidth + x * scale + offsetX) * 4;
+          output.set(rgba.subarray(sourceOffset, sourceOffset + 4), destination);
+        }
+      }
+    }
+  }
+  return output;
+}
+
+function paletteIndex(red: number, green: number, blue: number, alpha: number): number {
+  if (alpha < 128) return 0;
+  const quantized = ((red >> 5) << 5) | ((green >> 5) << 2) | (blue >> 6);
+  return 1 + Math.round((quantized / 255) * 254);
+}
+
+function writeCodeStream(indices: Uint8Array): number[] {
+  const clearCode = 256;
+  const endCode = 257;
+  const output: number[] = [];
+  let accumulator = 0;
+  let bitCount = 0;
+  let codeSize = 9;
+  let nextCode = 258;
+  let hasPrevious = false;
+
+  const write = (code: number) => {
+    accumulator |= code << bitCount;
+    bitCount += codeSize;
+    while (bitCount >= 8) {
+      output.push(accumulator & 0xff);
+      accumulator >>>= 8;
+      bitCount -= 8;
+    }
+  };
+
+  const reset = () => {
+    codeSize = 9;
+    nextCode = 258;
+    hasPrevious = false;
+  };
+
+  write(clearCode);
+  for (const index of indices) {
+    write(index);
+    if (hasPrevious) {
+      nextCode += 1;
+      if (nextCode === 1 << codeSize && codeSize < 12) codeSize += 1;
+      if (nextCode >= 4090) {
+        write(clearCode);
+        reset();
+        continue;
+      }
+    }
+    hasPrevious = true;
+  }
+  write(endCode);
+  if (bitCount > 0) output.push(accumulator & 0xff);
+  return output;
+}
+
+export function exportAnimatedGif(
+  project: PixelProject,
+  options: GifOptions = {},
+): Blob {
+  const scale = Math.max(1, Math.min(8, Math.floor(options.scale ?? 1)));
+  const width = project.width * scale;
+  const height = project.height * scale;
+  if (width > 4096 || height > 4096) {
+    throw new Error("GIF dimensions cannot exceed 4096 pixels.");
+  }
+
+  const bytes: number[] = [...new TextEncoder().encode("GIF89a")];
+  bytes.push(...littleEndian(width), ...littleEndian(height), 0xf7, 0, 0);
+  bytes.push(0, 0, 0);
+  for (let index = 1; index < 256; index += 1) {
+    const quantized = Math.round(((index - 1) / 254) * 255);
+    bytes.push(
+      ((quantized >> 5) & 7) * 36,
+      ((quantized >> 2) & 7) * 36,
+      (quantized & 3) * 85,
+    );
+  }
+
+  const loop = Math.max(0, Math.min(65535, Math.floor(options.loop ?? 0)));
+  bytes.push(
+    0x21,
+    0xff,
+    11,
+    ...new TextEncoder().encode("NETSCAPE2.0"),
+    3,
+    1,
+    ...littleEndian(loop),
+    0,
+  );
+
+  for (const frame of project.frames) {
+    const rgba = scaledRgba(
+      compositeFrameRgba(project, frame.id),
+      project.width,
+      project.height,
+      scale,
+    );
+    const indices = new Uint8Array(width * height);
+    for (let pixel = 0; pixel < indices.length; pixel += 1) {
+      const offset = pixel * 4;
+      indices[pixel] = paletteIndex(
+        rgba[offset],
+        rgba[offset + 1],
+        rgba[offset + 2],
+        rgba[offset + 3],
+      );
+    }
+
+    const delay = Math.max(2, Math.min(65535, Math.round(frame.duration / 10)));
+    bytes.push(0x21, 0xf9, 4, 0x05, ...littleEndian(delay), 0, 0);
+    bytes.push(0x2c, 0, 0, 0, 0, ...littleEndian(width), ...littleEndian(height), 0);
+    bytes.push(8);
+    const stream = writeCodeStream(indices);
+    for (let offset = 0; offset < stream.length; offset += 255) {
+      const block = stream.slice(offset, offset + 255);
+      bytes.push(block.length, ...block);
+    }
+    bytes.push(0);
+  }
+  bytes.push(0x3b);
+  return new Blob([new Uint8Array(bytes)], { type: "image/gif" });
+}
