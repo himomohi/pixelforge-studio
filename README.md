@@ -6,7 +6,7 @@ PixelForge Studio is a browser-based pixel-art editor built for people and AI ag
 
 1. **Live Cloudflare mirror:** https://pixelforge-studio.himomohi.workers.dev
 2. **Public source:** https://github.com/himomohi/pixelforge-studio
-3. **ChatGPT Sites backup:** https://pixelforge-studio.appcaster.chatgpt.site
+3. **ChatGPT Sites (in-app browser fallback):** https://pixelforge-studio.appcaster.chatgpt.site
 4. **Demo video:** https://youtu.be/-mTECXrUEy8
 
 **WebMCP Challenge:** https://webmcp.devpost.com/
