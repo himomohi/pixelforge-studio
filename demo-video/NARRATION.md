@@ -1,15 +1,13 @@
-# PixelForge Studio demo narration
+# PixelForge Studio demo narration — judging cut
 
-PixelForge Studio is a professional pixel-art editor built for people and AI agents to create together.
+Watch PixelForge change through WebMCP. In one agent workflow, the live editor duplicates a project, creates an animation frame, adds a layer, changes timing, and writes an exact pixel batch. No screen-coordinate guessing.
 
-In the browser, a person gets the full creative workflow: crisp pixel drawing, palettes, reference images, layers, frame animation, and production-ready exports. Projects are stored locally in the browser, so the canvas stays responsive and the artist stays in control.
+PixelForge Studio is a browser-based pixel-art production tool for indie game creators. Artists keep the full visual workflow — drawing, palettes, layers, animation, references, undo, and browser-local projects — while agents handle precise or repetitive steps.
 
-The difference is WebMCP. PixelForge registers sixty-five typed browser-native tools. Instead of guessing which button to click, an agent can read the project state and use structured actions for exact pixels, shapes, colors, frames, layers, reference conversion, fidelity checks, playback, and exports.
+Under the editor are sixty-five typed WebMCP tools. They expose real product concepts, not simulated clicks: project state, pixels, frames, layers, reference conversion, fidelity verification, playback, and exports. Bounded schemas keep inputs predictable, and every action updates the same visual state immediately.
 
-Here, the agent duplicates the current hamster project, renames it, creates a second animation frame, adds an Agent Highlights layer, changes the frame timing, and draws an exact pixel batch. Every action updates the same visual editor immediately. The artist can inspect the result, refine it manually, or undo it.
+That shared state is the difference. Before WebMCP, an agent had to infer canvas geometry, interface focus, and the selected frame or layer. Now the artist can review each edit, refine it manually, or undo it.
 
-This collaboration was difficult before WebMCP: visual editing tools were designed for people, while agents were left to infer coordinates and interface state. PixelForge gives both sides a shared, reliable creative surface.
+The result can ship as PNG, animated GIF, sprite sheet, editable project, or game-engine bundle.
 
-When the artwork is ready, it can be exported as a crisp PNG, an animated GIF, a sprite sheet with metadata, an editable project, or a game-engine-ready bundle.
-
-PixelForge Studio is open source, live on ChatGPT Sites, and built for The WebMCP Challenge.
+PixelForge Studio is live, open source, and built for The WebMCP Challenge.

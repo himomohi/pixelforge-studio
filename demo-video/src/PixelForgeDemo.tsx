@@ -165,7 +165,7 @@ const BrowserFrame = ({
   );
 };
 
-const AgentScene = () => {
+const AgentScene = ({duration = 360}: {duration?: number}) => {
   const frame = useCurrentFrame();
   const actions = [
     "duplicate_project",
@@ -178,7 +178,7 @@ const AgentScene = () => {
     <AbsoluteFill
       style={{
         background: "#09090f",
-        opacity: fade(frame, 600),
+        opacity: fade(frame, duration),
         padding: "54px 72px 64px",
         fontFamily: "Arial, sans-serif",
       }}
@@ -186,14 +186,17 @@ const AgentScene = () => {
       <PixelGrid />
       <div style={{display: "flex", alignItems: "center", justifyContent: "space-between"}}>
         <Logo small />
-        <div style={{color: colors.cyan, fontSize: 22, fontWeight: 800}}>LIVE WEBMCP WORKFLOW</div>
+          <div style={{color: colors.cyan, fontSize: 22, fontWeight: 800}}>LIVE WEBMCP RESULT</div>
       </div>
       <div style={{display: "flex", gap: 52, alignItems: "center", flex: 1}}>
         <div style={{flex: 1}}>
           <div style={{color: colors.ink, fontWeight: 900, fontSize: 54, lineHeight: 1.08}}>
-            The agent edits the same project.
+            One agent workflow. Five exact edits.
           </div>
-          <div style={{marginTop: 30, display: "grid", gap: 14}}>
+          <div style={{color: colors.muted, fontSize: 25, lineHeight: 1.4, marginTop: 20}}>
+            Project, frame, layer, timing, and pixels update in the live editor — without coordinate guessing.
+          </div>
+          <div style={{marginTop: 24, display: "grid", gap: 12}}>
             {actions.map((action, index) => {
               const show = interpolate(frame, [40 + index * 28, 58 + index * 28], [0, 1], {
                 extrapolateLeft: "clamp",
@@ -212,7 +215,7 @@ const AgentScene = () => {
                     font: "700 25px monospace",
                     background: colors.panel,
                     border: "1px solid #313142",
-                    padding: "15px 18px",
+                    padding: "12px 18px",
                   }}
                 >
                   <span style={{color: colors.cyan}}>✓</span> {action}
@@ -237,7 +240,64 @@ const AgentScene = () => {
   );
 };
 
-const EndScene = () => {
+const BeforeAfterScene = ({duration = 420}: {duration?: number}) => {
+  const frame = useCurrentFrame();
+  const reveal = interpolate(frame, [28, 70], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  return (
+    <AbsoluteFill
+      style={{
+        background: "#09090f",
+        opacity: fade(frame, duration),
+        padding: "46px 64px 56px",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
+      <PixelGrid />
+      <div style={{display: "flex", alignItems: "center", justifyContent: "space-between"}}>
+        <Logo small />
+        <div style={{color: colors.orange, fontSize: 22, fontWeight: 800}}>SHARED STATE · HUMAN REVIEW</div>
+      </div>
+      <div style={{color: colors.ink, fontWeight: 900, fontSize: 48, marginTop: 28}}>
+        The agent accelerates the work. The artist keeps control.
+      </div>
+      <div style={{display: "flex", gap: 28, flex: 1, alignItems: "center", marginTop: 20}}>
+        {[
+          {label: "BEFORE", src: "captures/01-editor.png", accent: colors.muted},
+          {label: "AFTER WEBMCP", src: "captures/03-agent-edited.png", accent: colors.cyan},
+        ].map((item, index) => (
+          <div
+            key={item.label}
+            style={{
+              flex: 1,
+              opacity: index === 0 ? 1 : reveal,
+              transform: index === 0 ? "none" : `translateX(${32 - reveal * 32}px)`,
+            }}
+          >
+            <div style={{color: item.accent, font: "800 21px Arial", marginBottom: 12}}>{item.label}</div>
+            <div
+              style={{
+                border: `8px solid ${index === 0 ? "#2a2a38" : colors.cyan}`,
+                borderRadius: 14,
+                overflow: "hidden",
+                boxShadow: "0 24px 70px rgba(0,0,0,.5)",
+              }}
+            >
+              <Img src={staticFile(item.src)} style={{width: "100%", display: "block"}} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{color: colors.muted, fontSize: 24, textAlign: "center"}}>
+        Review every change visually, continue drawing, or undo instantly.
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+const EndScene = ({duration = 150}: {duration?: number}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const scale = spring({frame, fps, config: {damping: 18}});
@@ -249,7 +309,7 @@ const EndScene = () => {
         justifyContent: "center",
         textAlign: "center",
         fontFamily: "Arial, sans-serif",
-        opacity: fade(frame, 255),
+        opacity: fade(frame, duration),
       }}
     >
       <PixelGrid />
@@ -271,39 +331,41 @@ const EndScene = () => {
 
 export const PixelForgeDemo = () => (
   <AbsoluteFill>
-    <Audio src={staticFile("narration.wav")} />
-    <Sequence from={0} durationInFrames={180}>
-      <TitleScene />
+    <Audio src={staticFile("narration-v2.wav")} />
+    <Sequence from={0} durationInFrames={360}>
+      <AgentScene duration={360} />
     </Sequence>
-    <Sequence from={165} durationInFrames={600}>
+    <Sequence from={330} durationInFrames={330}>
       <BrowserFrame
         src="captures/01-editor.png"
-        title="A complete pixel-art studio in the browser."
-        subtitle="Draw, animate, manage layers and palettes, work from references, and export production-ready assets."
+        title="Built for indie game creators."
+        subtitle="Artists keep drawing, palettes, references, layers, animation, undo, and browser-local projects. Agents handle the precise repetition."
+        duration={330}
       />
     </Sequence>
-    <Sequence from={735} durationInFrames={600}>
+    <Sequence from={630} durationInFrames={450}>
       <BrowserFrame
         src="captures/02-webmcp.png"
-        title="65 typed tools. Zero UI guessing."
-        subtitle="WebMCP exposes project, drawing, animation, reference, verification, and export workflows directly to compatible agents."
+        title="65 typed tools. Real product concepts."
+        subtitle="Bounded schemas expose project state, pixels, frames, layers, reference conversion, fidelity verification, playback, and exports."
         accent={colors.purple}
+        duration={450}
       />
     </Sequence>
-    <Sequence from={1305} durationInFrames={600}>
-      <AgentScene />
+    <Sequence from={1050} durationInFrames={420}>
+      <BeforeAfterScene duration={420} />
     </Sequence>
-    <Sequence from={1875} durationInFrames={300}>
+    <Sequence from={1440} durationInFrames={330}>
       <BrowserFrame
         src="captures/04-export.png"
-        title="The human stays in control."
-        subtitle="Review every change, keep editing visually, undo at any time, then export PNG, GIF, sprite sheets, projects, or game bundles."
+        title="From precise edits to shippable assets."
+        subtitle="Export PNG, animated GIF, sprite sheets with metadata, editable projects, or game-engine-ready bundles."
         accent={colors.orange}
-        duration={300}
+        duration={330}
       />
     </Sequence>
-    <Sequence from={2145} durationInFrames={255}>
-      <EndScene />
+    <Sequence from={1740} durationInFrames={150}>
+      <EndScene duration={150} />
     </Sequence>
   </AbsoluteFill>
 );

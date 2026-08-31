@@ -5,7 +5,7 @@ export const Root = () => (
   <Composition
     id="PixelForgeDemo"
     component={PixelForgeDemo}
-    durationInFrames={2400}
+    durationInFrames={1890}
     fps={30}
     width={1920}
     height={1080}
