@@ -1,0 +1,334 @@
+[
+  {
+    "tool": "duplicate_project",
+    "args": {},
+    "result": {
+      "frameCount": 4,
+      "layerCount": 1,
+      "message": "Project duplicated",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "rename_project",
+    "args": {
+      "name": "WebMCP Live Run"
+    },
+    "result": {
+      "frameCount": 4,
+      "layerCount": 1,
+      "message": "Project renamed",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "set_active_frame",
+    "args": {
+      "index": 0
+    },
+    "result": {
+      "frameCount": 4,
+      "layerCount": 1,
+      "message": "Frame selected",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "get_project_state",
+    "args": {},
+    "result": {
+      "activeFrameId": "frame-mth062c5-2",
+      "activeLayerId": "layer-mth062c5-1",
+      "frames": [
+        {
+          "duration": 130,
+          "id": "frame-mth062c5-2",
+          "index": 0
+        },
+        {
+          "duration": 130,
+          "id": "frame-1788166505813-y2nia",
+          "index": 1
+        },
+        {
+          "duration": 130,
+          "id": "frame-1788166505813-6fst8",
+          "index": 2
+        },
+        {
+          "duration": 130,
+          "id": "frame-1788166505813-lhngq",
+          "index": 3
+        }
+      ],
+      "height": 32,
+      "id": "project-mth07lha-8",
+      "layers": [
+        {
+          "id": "layer-mth062c5-1",
+          "locked": false,
+          "name": "Layer 1",
+          "opacity": 1,
+          "visible": true
+        }
+      ],
+      "name": "WebMCP Live Run",
+      "onionSkin": {
+        "enabled": true,
+        "next": 1,
+        "opacity": 0.25,
+        "previous": 1
+      },
+      "palettes": [
+        {
+          "colors": [
+            "#0b0f1a",
+            "#28324a",
+            "#66d9ef",
+            "#b8f34a",
+            "#ff9f68",
+            "#f4f7fb",
+            "#c792ea",
+            "#ff5d73"
+          ],
+          "id": "palette-neon",
+          "name": "Neon Runner"
+        }
+      ],
+      "selection": null,
+      "symmetry": {
+        "centerX": 16,
+        "centerY": 16,
+        "enabled": false,
+        "x": false,
+        "y": false
+      },
+      "tool": {
+        "color": "#b8f34a",
+        "fill": false,
+        "size": 1,
+        "tool": "pencil"
+      },
+      "width": 32
+    }
+  },
+  {
+    "tool": "add_frame",
+    "args": {},
+    "result": {
+      "frameCount": 5,
+      "layerCount": 1,
+      "message": "Frame added",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "undo",
+    "args": {},
+    "result": {
+      "frameCount": 4,
+      "layerCount": 1,
+      "message": "Undo completed",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "duplicate_frame",
+    "args": {},
+    "result": {
+      "frameCount": 5,
+      "layerCount": 1,
+      "message": "Frame duplicated",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "set_frame_duration",
+    "args": {
+      "ms": 180
+    },
+    "result": {
+      "frameCount": 5,
+      "layerCount": 1,
+      "message": "Frame duration set",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "add_layer",
+    "args": {},
+    "result": {
+      "frameCount": 5,
+      "layerCount": 2,
+      "message": "Layer added",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "rename_layer",
+    "args": {
+      "name": "Agent Highlights"
+    },
+    "result": {
+      "frameCount": 5,
+      "layerCount": 2,
+      "message": "Layer renamed",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "draw_pixels",
+    "args": {
+      "color": "#5EE8FF",
+      "pixels": [
+        {
+          "x": 7,
+          "y": 11
+        },
+        {
+          "x": 8,
+          "y": 11
+        },
+        {
+          "x": 9,
+          "y": 11
+        },
+        {
+          "x": 8,
+          "y": 10
+        },
+        {
+          "x": 8,
+          "y": 12
+        },
+        {
+          "x": 23,
+          "y": 11
+        },
+        {
+          "x": 24,
+          "y": 11
+        },
+        {
+          "x": 25,
+          "y": 11
+        },
+        {
+          "x": 24,
+          "y": 10
+        },
+        {
+          "x": 24,
+          "y": 12
+        }
+      ]
+    },
+    "result": {
+      "frameCount": 5,
+      "layerCount": 2,
+      "message": "Pixels drawn",
+      "ok": true,
+      "projectId": "project-mth07lha-8"
+    }
+  },
+  {
+    "tool": "get_project_state",
+    "args": {},
+    "result": {
+      "activeFrameId": "frame-1788166629104-qugwy",
+      "activeLayerId": "layer-1788166655709-2louv",
+      "frames": [
+        {
+          "duration": 130,
+          "id": "frame-mth062c5-2",
+          "index": 0
+        },
+        {
+          "duration": 180,
+          "id": "frame-1788166629104-qugwy",
+          "index": 1
+        },
+        {
+          "duration": 130,
+          "id": "frame-1788166505813-y2nia",
+          "index": 2
+        },
+        {
+          "duration": 130,
+          "id": "frame-1788166505813-6fst8",
+          "index": 3
+        },
+        {
+          "duration": 130,
+          "id": "frame-1788166505813-lhngq",
+          "index": 4
+        }
+      ],
+      "height": 32,
+      "id": "project-mth07lha-8",
+      "layers": [
+        {
+          "id": "layer-mth062c5-1",
+          "locked": false,
+          "name": "Layer 1",
+          "opacity": 1,
+          "visible": true
+        },
+        {
+          "id": "layer-1788166655709-2louv",
+          "locked": false,
+          "name": "Agent Highlights",
+          "opacity": 1,
+          "visible": true
+        }
+      ],
+      "name": "WebMCP Live Run",
+      "onionSkin": {
+        "enabled": true,
+        "next": 1,
+        "opacity": 0.25,
+        "previous": 1
+      },
+      "palettes": [
+        {
+          "colors": [
+            "#0b0f1a",
+            "#28324a",
+            "#66d9ef",
+            "#b8f34a",
+            "#ff9f68",
+            "#f4f7fb",
+            "#c792ea",
+            "#ff5d73"
+          ],
+          "id": "palette-neon",
+          "name": "Neon Runner"
+        }
+      ],
+      "selection": null,
+      "symmetry": {
+        "centerX": 16,
+        "centerY": 16,
+        "enabled": false,
+        "x": false,
+        "y": false
+      },
+      "tool": {
+        "color": "#b8f34a",
+        "fill": false,
+        "size": 1,
+        "tool": "pencil"
+      },
+      "width": 32
+    }
+  }
+]

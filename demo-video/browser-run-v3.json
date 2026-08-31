@@ -1,0 +1,59 @@
+{
+  "duration": 32,
+  "fps": 60,
+  "output_size": [3840, 2880],
+  "source_size": [1920, 1440],
+  "cursor_scale": 1.8,
+  "click_strength": 10,
+  "rotation_strength_degrees": 4,
+  "cursor_asset": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/cursor-arrow.png",
+  "cursor_hotspot": [4, 4],
+  "shots": {
+    "baseline": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/captures-v3/02-live-run-baseline.png",
+    "addFrame": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/captures-v3/03-add-frame.png",
+    "undo": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/captures-v3/04-undo.png",
+    "duplicateFrame": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/captures-v3/05-duplicate-frame.png",
+    "duration": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/captures-v3/06-duration-180.png",
+    "addLayer": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/captures-v3/07-add-layer.png",
+    "renameLayer": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/captures-v3/08-rename-layer.png",
+    "drawPixels": "C:/Users/himom/Documents/Codex/2026-08-31/https-webmcp-devpost-com-https-webmcp-2/work/pixelforge-studio/demo-video/public/captures-v3/09-draw-pixels.png"
+  },
+  "scene_starts": [
+    [0.0, "baseline", "fade"],
+    [4.0, "addFrame", "fade"],
+    [8.0, "undo", "fade"],
+    [12.0, "duplicateFrame", "fade"],
+    [16.0, "duration", "fade"],
+    [20.0, "addLayer", "fade"],
+    [24.0, "renameLayer", "fade"],
+    [28.0, "drawPixels", "fade"]
+  ],
+  "cursor_keys": [
+    [0.0, 1140, 720],
+    [3.5, 1710, 1340],
+    [4.8, 1710, 1340],
+    [7.5, 1870, 32],
+    [8.8, 1870, 32],
+    [11.5, 1660, 1340],
+    [12.8, 1660, 1340],
+    [15.5, 1740, 1300],
+    [16.8, 1740, 1300],
+    [19.5, 1810, 860],
+    [20.8, 1810, 860],
+    [23.5, 1810, 980],
+    [24.8, 1810, 980],
+    [27.5, 1260, 700],
+    [31.8, 1260, 700]
+  ],
+  "camera_keys": [
+    [0.0, 960, 720, 1.0],
+    [3.5, 960, 860, 1.04],
+    [8.0, 960, 720, 1.0],
+    [12.0, 960, 860, 1.04],
+    [16.0, 960, 840, 1.05],
+    [20.0, 1120, 760, 1.06],
+    [24.0, 1120, 760, 1.06],
+    [28.0, 1120, 700, 1.08]
+  ],
+  "click_times": []
+}
