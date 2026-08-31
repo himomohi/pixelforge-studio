@@ -41,3 +41,5 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+/demo-video/node_modules/
+/demo-video/out/

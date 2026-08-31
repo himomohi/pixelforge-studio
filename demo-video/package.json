@@ -1,0 +1,20 @@
+{
+  "name": "pixelforge-demo-video",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts PixelForgeDemo out/pixelforge-demo.mp4 --codec h264 --crf 18"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.518",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "remotion": "4.0.518"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "typescript": "5.9.3"
+  }
+}
