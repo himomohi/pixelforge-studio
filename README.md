@@ -2,7 +2,13 @@
 
 PixelForge Studio is a browser-based pixel-art editor built for people and AI agents to create together. Humans get a complete visual editor for drawing, animation, layers, palettes, reference images, and exports. Compatible agents get 65 structured WebMCP tools that operate on the same project without guessing through the interface.
 
-**Live app:** https://pixelforge-studio.appcaster.chatgpt.site  
+## Judge quick links
+
+1. **Live Cloudflare mirror:** https://pixelforge-studio.himomohi.workers.dev
+2. **Public source:** https://github.com/himomohi/pixelforge-studio
+3. **ChatGPT Sites backup:** https://pixelforge-studio.appcaster.chatgpt.site
+4. **Demo video:** https://youtu.be/-mTECXrUEy8
+
 **WebMCP Challenge:** https://webmcp.devpost.com/
 
 ## Why WebMCP
@@ -33,6 +39,10 @@ The integration lives in [`lib/pixelforge/webmcp.ts`](lib/pixelforge/webmcp.ts).
 
 Tools use bounded JSON schemas and cancellation signals. Read-only operations are annotated, destructive operations are identified, and reference workflows preserve browser-local image data.
 
+### A real shared-state WebMCP run
+
+The judging flow uses the actual editor tools in this order: `add_frame`, `undo`, `duplicate_frame`, `set_frame_duration` to **180 ms**, `add_layer`, `rename_layer` to **Agent Highlights**, then `draw_pixels` with **10 cyan pixels**. Each tool writes to the browser-local project state that the canvas, timeline, and layers panel already use. The result is immediately visible in the editor and remains a normal edit: the artist can undo or redo it, continue drawing, and export it.
+
 ## Product features
 
 - Crisp, grid-aligned pixel canvas with keyboard and pointer editing
@@ -44,13 +54,16 @@ Tools use bounded JSON schemas and cancellation signals. Read-only operations ar
 - PNG, GIF, sprite-sheet, project JSON, and multi-engine game bundle exports
 - Responsive desktop and mobile editor layouts
 
+## Focused product surface
+
+PixelForge now keeps only the 14 UI primitives the product actually uses. The unused D1/notes scaffold was removed, leaving a smaller project surface while preserving the editor, its browser-local state, and the WebMCP workflow.
+
 ## Run locally
 
 Requirements:
 
 - Node.js 22.13 or newer
 - npm
-- Linux or WSL for the provided bounded Sites build scripts
 
 ```bash
 npm ci
@@ -81,10 +94,20 @@ npm run render
 
 The rendered MP4 is written to `demo-video/out/pixelforge-demo.mp4`.
 
+## Deploy the Cloudflare mirror
+
+The production mirror uses a Vinext Worker plus Cloudflare Static Assets. A
+successful build writes the deployable Worker configuration to
+`dist/server/wrangler.json`.
+
+```bash
+npm run deploy:cloudflare
+```
+
 ## Architecture
 
 - Next.js 16 and React 19 UI
-- Vinext and Vite for Cloudflare-compatible Sites output
+- Vinext, Vite, and Cloudflare Workers with Static Assets
 - Browser-local project and reference storage
 - TypeScript pixel-art algorithms and exporters
 - Browser-native WebMCP registration
