@@ -1,5 +1,5 @@
-import { PixelForgeStudio } from "@/components/editor/PixelForgeStudio";
+import { WebMCPStartupGate } from "@/components/editor/WebMCPStartupGate";
 
 export default function Home() {
-  return <PixelForgeStudio />;
+  return <WebMCPStartupGate />;
 }
